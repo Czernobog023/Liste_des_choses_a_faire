@@ -8,7 +8,7 @@ Une application web moderne pour la gestion collaborative de tâches partagées 
 - **Proposition de tâches** : Chaque utilisateur peut proposer de nouvelles tâches
 - **Validation bipartite** : Les tâches ne deviennent actives qu'après validation des deux utilisateurs
 - **Gestion complète** : Ajouter, valider, rejeter, terminer et supprimer des tâches
-- **Catégorisation** : Organisation des tâches par catégories (Général, Maison, Courses, Travail, Personnel, Urgent)
+
 
 ### 🔄 Synchronisation en Temps Réel
 - **WebSocket** : Mises à jour instantanées pour tous les utilisateurs connectés
@@ -72,13 +72,13 @@ npx pm2 start ecosystem.config.js
 L'application utilise les paramètres suivants par défaut :
 - **Port** : 3000
 - **Stockage** : Fichier JSON local (`data/tasks.json`)
-- **Utilisateurs** : "Utilisateur 1" et "Utilisateur 2"
+- **Utilisateurs** : "Maya l'abeille" et "Rayanha"
 
 ## 🎯 Guide d'Utilisation
 
 ### 1. Première Connexion
 1. Ouvrez l'application dans votre navigateur
-2. Sélectionnez votre identité utilisateur dans le menu déroulant (Utilisateur 1 ou 2)
+2. Sélectionnez votre identité utilisateur dans le menu déroulant (Maya l'abeille ou Rayanha)
 3. Vous êtes maintenant prêt à collaborer !
 
 ### 2. Proposer une Nouvelle Tâche
@@ -86,7 +86,7 @@ L'application utilise les paramètres suivants par défaut :
 2. Remplissez le formulaire :
    - **Titre** (obligatoire) : Description courte de la tâche
    - **Description** (optionnel) : Détails supplémentaires
-   - **Catégorie** : Classement de la tâche
+
 3. Cliquez sur "Proposer la tâche"
 4. La tâche apparaît dans l'onglet "En Attente"
 
@@ -161,8 +161,8 @@ collaborative-task-manager/
   "id": "uuid",
   "title": "Titre de la tâche",
   "description": "Description optionnelle",
-  "category": "Général",
-  "proposedBy": "Utilisateur 1",
+
+  "proposedBy": "Maya l'abeille",
   "proposedAt": "2024-01-15T10:30:00.000Z",
   "approvedAt": "2024-01-15T11:00:00.000Z",
   "status": "active"
@@ -175,10 +175,10 @@ collaborative-task-manager/
   "id": "uuid",
   "title": "Titre de la tâche",
   "description": "Description optionnelle",
-  "category": "Général",
-  "proposedBy": "Utilisateur 1",
+
+  "proposedBy": "Maya l'abeille",
   "proposedAt": "2024-01-15T10:30:00.000Z",
-  "validations": ["Utilisateur 1"],
+  "validations": ["Maya l'abeille"],
   "status": "pending"
 }
 ```
@@ -233,7 +233,7 @@ PORT=3000             # Port d'écoute
 4. **Synchronisation** : Utiliser la même instance sur un serveur partagé
 
 ### Bonnes Pratiques Collaboratives
-- **Communication** : Se mettre d'accord sur les catégories à utiliser
+
 - **Validation rapide** : Traiter rapidement les tâches en attente
 - **Descriptions claires** : Ajouter des détails pour éviter les malentendus
 - **Sauvegarde régulière** : Exporter périodiquement les données

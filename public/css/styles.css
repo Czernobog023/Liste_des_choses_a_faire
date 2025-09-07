@@ -231,15 +231,7 @@ body {
   flex: 1;
 }
 
-.task-category {
-  background: var(--bg-tertiary);
-  color: var(--text-secondary);
-  padding: 0.25rem 0.5rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
-  font-weight: 500;
-  white-space: nowrap;
-}
+
 
 .task-description {
   color: var(--text-secondary);

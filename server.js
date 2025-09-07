@@ -32,7 +32,7 @@ async function initializeDataFile() {
     const exists = await fs.pathExists(DATA_FILE);
     if (!exists) {
       const initialData = {
-        users: ['Utilisateur 1', 'Utilisateur 2'],
+        users: ['Maya l\'abeille', 'Rayanha'],
         tasks: [],
         pendingTasks: []
       };
@@ -49,7 +49,7 @@ async function readData() {
     return await fs.readJson(DATA_FILE);
   } catch (error) {
     console.error('Erreur lors de la lecture des données:', error);
-    return { users: ['Utilisateur 1', 'Utilisateur 2'], tasks: [], pendingTasks: [] };
+    return { users: ['Maya l\'abeille', 'Rayanha'], tasks: [], pendingTasks: [] };
   }
 }
 
@@ -76,7 +76,7 @@ app.get('/api/data', async (req, res) => {
 // Ajouter une nouvelle tâche (en attente de validation)
 app.post('/api/tasks/propose', async (req, res) => {
   try {
-    const { title, description, proposedBy, category = 'Général' } = req.body;
+    const { title, description, proposedBy } = req.body;
     
     if (!title || !proposedBy) {
       return res.status(400).json({ error: 'Titre et utilisateur proposant requis' });
@@ -87,7 +87,6 @@ app.post('/api/tasks/propose', async (req, res) => {
       id: uuidv4(),
       title: title.trim(),
       description: description?.trim() || '',
-      category,
       proposedBy,
       proposedAt: new Date().toISOString(),
       validations: [proposedBy], // L'utilisateur qui propose valide automatiquement

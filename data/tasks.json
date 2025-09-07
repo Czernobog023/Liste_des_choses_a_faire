@@ -1,1 +1,8 @@
-{"users":["Utilisateur 1","Utilisateur 2"],"tasks":[],"pendingTasks":[]}
+{
+  "users": [
+    "Maya l'abeille",
+    "Rayanha"
+  ],
+  "tasks": [],
+  "pendingTasks": []
+}

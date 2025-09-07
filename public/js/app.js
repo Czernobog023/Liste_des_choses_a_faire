@@ -1,7 +1,7 @@
 // Application de Gestion de Tâches Collaboratives
 class TaskManager {
     constructor() {
-        this.currentUser = 'Utilisateur 1';
+        this.currentUser = 'Maya l\'abeille';
         this.socket = null;
         this.data = {
             users: [],
@@ -301,7 +301,6 @@ class TaskManager {
             <div class="task-card ${type}">
                 <div class="task-header">
                     <h3 class="task-title">${task.title}</h3>
-                    <span class="task-category">${task.category}</span>
                 </div>
                 ${task.description ? `<p class="task-description">${task.description}</p>` : ''}
                 ${validationStatus}
@@ -331,7 +330,6 @@ class TaskManager {
     async submitNewTask() {
         const title = document.getElementById('taskTitle').value.trim();
         const description = document.getElementById('taskDescription').value.trim();
-        const category = document.getElementById('taskCategory').value;
 
         if (!title) {
             this.showNotification('warning', 'Erreur', 'Le titre de la tâche est requis');
@@ -347,7 +345,6 @@ class TaskManager {
                 body: JSON.stringify({
                     title,
                     description,
-                    category,
                     proposedBy: this.currentUser
                 })
             });
