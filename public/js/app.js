@@ -1,177 +1,290 @@
-// Application de Gestion de Tâches Collaboratives
-class TaskManager {
+// Application Collaborative Maya & Rayanha - Version Mobile Optimisée
+class MobileTaskManager {
     constructor() {
         this.currentUser = 'Maya l\'abeille';
         this.socket = null;
         this.data = {
-            users: [],
+            users: ['Maya l\'abeille', 'Rayanha'],
             tasks: [],
             pendingTasks: []
         };
+        this.isLoading = false;
         
         this.init();
     }
 
     // Initialisation de l'application
     init() {
+        this.showLoading(true);
+        this.setupEventListeners();
         this.initSocket();
-        this.initEventListeners();
-        this.loadData();
-    }
-
-    // Initialisation de Socket.IO
-    initSocket() {
-        this.socket = io();
-        
-        this.socket.on('connect', () => {
-            this.updateConnectionStatus(true);
-        });
-        
-        this.socket.on('disconnect', () => {
-            this.updateConnectionStatus(false);
-        });
-        
-        // Écouter les événements de tâches
-        this.socket.on('taskProposed', (task) => {
-            this.data.pendingTasks.push(task);
-            this.renderPendingTasks();
-            this.updatePendingCount();
-            this.showNotification('success', 'Nouvelle tâche proposée', `${task.proposedBy} a proposé: ${task.title}`);
-        });
-        
-        this.socket.on('taskValidated', ({ taskId, userId, validations }) => {
-            const task = this.data.pendingTasks.find(t => t.id === taskId);
-            if (task) {
-                task.validations = validations;
-                this.renderPendingTasks();
-                this.showNotification('info', 'Tâche validée', `${userId} a validé la tâche`);
-            }
-        });
-        
-        this.socket.on('taskApproved', (task) => {
-            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== task.id);
-            this.data.tasks.push(task);
-            this.renderActiveTasks();
-            this.renderPendingTasks();
-            this.updatePendingCount();
-            this.showNotification('success', 'Tâche approuvée', `La tâche "${task.title}" est maintenant active !`);
-        });
-        
-        this.socket.on('taskRejected', ({ taskId, rejectedBy }) => {
-            const task = this.data.pendingTasks.find(t => t.id === taskId);
-            if (task) {
-                this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-                this.renderPendingTasks();
-                this.updatePendingCount();
-                this.showNotification('warning', 'Tâche rejetée', `${rejectedBy} a rejeté la tâche "${task.title}"`);
-            }
-        });
-        
-        this.socket.on('taskCompleted', (task) => {
-            const activeTask = this.data.tasks.find(t => t.id === task.id);
-            if (activeTask) {
-                Object.assign(activeTask, task);
-                this.renderActiveTasks();
-                this.renderCompletedTasks();
-                this.showNotification('success', 'Tâche terminée', `"${task.title}" a été marquée comme terminée !`);
-            }
-        });
-        
-        this.socket.on('taskDeleted', ({ taskId, deletedBy }) => {
-            this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
-            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-            this.renderActiveTasks();
-            this.renderPendingTasks();
-            this.renderCompletedTasks();
-            this.updatePendingCount();
-            this.showNotification('info', 'Tâche supprimée', `${deletedBy} a supprimé une tâche`);
-        });
-        
-        this.socket.on('dataImported', ({ message }) => {
-            this.loadData();
-            this.showNotification('success', 'Import réussi', message);
+        this.loadData().finally(() => {
+            this.showLoading(false);
         });
     }
 
-    // Initialisation des écouteurs d'événements
-    initEventListeners() {
+    // Configuration des écouteurs d'événements optimisés pour mobile
+    setupEventListeners() {
         // Sélecteur d'utilisateur
-        document.getElementById('currentUser').addEventListener('change', (e) => {
-            this.currentUser = e.target.value;
-        });
+        const userSelector = document.getElementById('currentUser');
+        if (userSelector) {
+            userSelector.addEventListener('change', (e) => {
+                this.currentUser = e.target.value;
+                this.showNotification('info', 'Utilisateur changé', `Vous êtes maintenant ${this.currentUser}`);
+            });
+        }
 
-        // Navigation par onglets
+        // Navigation par onglets - optimisée touch
         document.querySelectorAll('.nav-tab').forEach(tab => {
-            tab.addEventListener('click', (e) => {
-                const targetTab = e.currentTarget.dataset.tab;
+            this.addTouchHandler(tab, () => {
+                const targetTab = tab.dataset.tab;
                 this.switchTab(targetTab);
             });
         });
 
         // Bouton nouvelle tâche
-        document.getElementById('addTaskBtn').addEventListener('click', () => {
-            this.openTaskModal();
-        });
+        const addTaskBtn = document.getElementById('addTaskBtn');
+        if (addTaskBtn) {
+            this.addTouchHandler(addTaskBtn, () => {
+                this.openTaskModal();
+            });
+        }
 
-        // Modal de tâche
-        document.getElementById('taskForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.submitNewTask();
-        });
+        // Modal de nouvelle tâche
+        const taskForm = document.getElementById('taskForm');
+        if (taskForm) {
+            taskForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.submitNewTask();
+            });
+        }
 
-        document.getElementById('cancelTaskBtn').addEventListener('click', () => {
-            this.closeTaskModal();
-        });
+        // Fermeture de modal
+        const closeModal = document.getElementById('closeModal');
+        const cancelTask = document.getElementById('cancelTask');
+        const taskModal = document.getElementById('taskModal');
+        
+        if (closeModal) {
+            this.addTouchHandler(closeModal, () => this.closeTaskModal());
+        }
+        
+        if (cancelTask) {
+            this.addTouchHandler(cancelTask, () => this.closeTaskModal());
+        }
+        
+        if (taskModal) {
+            taskModal.addEventListener('click', (e) => {
+                if (e.target === taskModal || e.target.classList.contains('modal-backdrop')) {
+                    this.closeTaskModal();
+                }
+            });
+        }
 
-        document.querySelector('.modal-close').addEventListener('click', () => {
-            this.closeTaskModal();
-        });
+        // Export/Import
+        const exportBtn = document.getElementById('exportBtn');
+        const importBtn = document.getElementById('importBtn');
+        const importFile = document.getElementById('importFile');
+        
+        if (exportBtn) {
+            this.addTouchHandler(exportBtn, () => this.exportData());
+        }
+        
+        if (importBtn) {
+            this.addTouchHandler(importBtn, () => {
+                if (importFile) importFile.click();
+            });
+        }
+        
+        if (importFile) {
+            importFile.addEventListener('change', (e) => {
+                if (e.target.files[0]) {
+                    this.importData(e.target.files[0]);
+                }
+            });
+        }
 
-        // Fermer modal en cliquant en dehors
-        document.getElementById('taskModal').addEventListener('click', (e) => {
-            if (e.target === e.currentTarget) {
-                this.closeTaskModal();
+        // Gestion du clavier virtuel sur mobile
+        this.handleVirtualKeyboard();
+    }
+
+    // Ajouter un gestionnaire d'événement touch-friendly
+    addTouchHandler(element, handler) {
+        if (!element) return;
+        
+        let touchStarted = false;
+        
+        // Touch events pour mobile
+        element.addEventListener('touchstart', (e) => {
+            touchStarted = true;
+            element.style.transform = 'scale(0.95)';
+        }, { passive: true });
+        
+        element.addEventListener('touchend', (e) => {
+            if (touchStarted) {
+                e.preventDefault();
+                element.style.transform = '';
+                handler(e);
+                touchStarted = false;
+            }
+        }, { passive: false });
+        
+        element.addEventListener('touchcancel', () => {
+            element.style.transform = '';
+            touchStarted = false;
+        }, { passive: true });
+        
+        // Click fallback pour desktop
+        element.addEventListener('click', (e) => {
+            if (!touchStarted) {
+                handler(e);
             }
         });
+    }
 
-        // Boutons export/import
-        document.getElementById('exportBtn').addEventListener('click', () => {
-            this.exportData();
+    // Gestion du clavier virtuel mobile
+    handleVirtualKeyboard() {
+        let viewport = window.visualViewport;
+        
+        if (viewport) {
+            viewport.addEventListener('resize', () => {
+                document.documentElement.style.setProperty('--viewport-height', `${viewport.height}px`);
+            });
+        }
+        
+        // Fallback pour navigateurs sans visualViewport
+        const inputs = document.querySelectorAll('input, textarea');
+        inputs.forEach(input => {
+            input.addEventListener('focus', () => {
+                setTimeout(() => {
+                    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }, 300);
+            });
         });
+    }
 
-        document.getElementById('importBtn').addEventListener('click', () => {
-            document.getElementById('importFile').click();
+    // Initialisation Socket.IO
+    initSocket() {
+        this.socket = io({
+            transports: ['websocket', 'polling']
         });
+        
+        this.socket.on('connect', () => {
+            console.log('🔌 Connecté au serveur');
+            this.updateConnectionStatus(true);
+        });
+        
+        this.socket.on('disconnect', () => {
+            console.log('❌ Déconnecté du serveur');
+            this.updateConnectionStatus(false);
+        });
+        
+        // Événements de tâches avec feedback mobile
+        this.socket.on('taskProposed', (task) => {
+            console.log('📨 Nouvelle tâche proposée:', task);
+            this.data.pendingTasks.push(task);
+            this.renderAllTasks();
+            this.updateBadges();
+            this.showNotification('success', 'Nouvelle tâche', `${task.proposedBy} a proposé: "${task.title}"`);
+            this.vibrate();
+        });
+        
+        this.socket.on('taskValidated', ({ taskId, userId, validations }) => {
+            console.log('✅ Tâche validée:', { taskId, userId });
+            const task = this.data.pendingTasks.find(t => t.id === taskId);
+            if (task) {
+                task.validations = validations;
+                this.renderAllTasks();
+                this.showNotification('info', 'Validation', `${userId} a validé une tâche`);
+            }
+        });
+        
+        this.socket.on('taskApproved', (task) => {
+            console.log('🎉 Tâche approuvée:', task);
+            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== task.id);
+            this.data.tasks.push(task);
+            this.renderAllTasks();
+            this.updateBadges();
+            this.showNotification('success', 'Tâche active', `"${task.title}" est maintenant active !`);
+            this.vibrate();
+        });
+        
+        this.socket.on('taskRejected', ({ taskId, rejectedBy }) => {
+            console.log('❌ Tâche rejetée:', { taskId, rejectedBy });
+            const task = this.data.pendingTasks.find(t => t.id === taskId);
+            if (task) {
+                this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
+                this.renderAllTasks();
+                this.updateBadges();
+                this.showNotification('warning', 'Tâche rejetée', `${rejectedBy} a rejeté "${task.title}"`);
+            }
+        });
+        
+        this.socket.on('taskCompleted', (task) => {
+            console.log('🏆 Tâche terminée:', task);
+            const activeTask = this.data.tasks.find(t => t.id === task.id);
+            if (activeTask) {
+                Object.assign(activeTask, task);
+                this.renderAllTasks();
+                this.updateBadges();
+                this.showNotification('success', 'Terminé', `"${task.title}" a été accomplie !`);
+                this.vibrate([100, 50, 100]);
+            }
+        });
+        
+        this.socket.on('taskDeleted', ({ taskId, deletedBy }) => {
+            console.log('🗑 Tâche supprimée:', { taskId, deletedBy });
+            this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
+            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
+            this.renderAllTasks();
+            this.updateBadges();
+            this.showNotification('info', 'Suppression', `${deletedBy} a supprimé une tâche`);
+        });
+        
+        this.socket.on('dataImported', () => {
+            console.log('📥 Données importées');
+            this.loadData();
+            this.showNotification('success', 'Import réussi', 'Nouvelles données chargées');
+        });
+    }
 
-        document.getElementById('importFile').addEventListener('change', (e) => {
-            this.importData(e.target.files[0]);
-        });
+    // Vibration pour les appareils mobiles
+    vibrate(pattern = 200) {
+        if ('vibrate' in navigator) {
+            navigator.vibrate(pattern);
+        }
     }
 
     // Changer d'onglet
     switchTab(tabName) {
-        // Mettre à jour les onglets
+        // Mettre à jour l'état des onglets
         document.querySelectorAll('.nav-tab').forEach(tab => {
             tab.classList.remove('active');
         });
         document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
 
-        // Mettre à jour les sections
-        document.querySelectorAll('.content-section').forEach(section => {
-            section.classList.remove('active');
+        // Mettre à jour le contenu
+        document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
         });
-        document.getElementById(`${tabName}-section`).classList.add('active');
+        document.getElementById(`${tabName}-content`).classList.add('active');
+        
+        // Scroll vers le haut
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     }
 
     // Charger les données depuis l'API
     async loadData() {
         try {
             const response = await fetch('/api/data');
-            this.data = await response.json();
-            this.renderAllTasks();
-            this.updatePendingCount();
+            if (response.ok) {
+                this.data = await response.json();
+                this.renderAllTasks();
+                this.updateBadges();
+            } else {
+                throw new Error('Erreur de chargement des données');
+            }
         } catch (error) {
-            console.error('Erreur lors du chargement des données:', error);
+            console.error('❌ Erreur lors du chargement:', error);
             this.showNotification('error', 'Erreur', 'Impossible de charger les données');
         }
     }
@@ -186,54 +299,62 @@ class TaskManager {
     // Rendu des tâches actives
     renderActiveTasks() {
         const container = document.getElementById('activeTasks');
-        const emptyState = document.getElementById('emptyActiveTasks');
+        const emptyState = document.getElementById('activeEmpty');
+        
+        if (!container || !emptyState) return;
+        
         const activeTasks = this.data.tasks.filter(task => task.status !== 'completed');
 
         if (activeTasks.length === 0) {
             container.innerHTML = '';
             emptyState.style.display = 'block';
-            return;
+        } else {
+            emptyState.style.display = 'none';
+            container.innerHTML = activeTasks.map(task => this.createTaskCard(task, 'active')).join('');
+            this.bindTaskActions(container);
         }
-
-        emptyState.style.display = 'none';
-        container.innerHTML = activeTasks.map(task => this.createTaskCard(task, 'active')).join('');
     }
 
     // Rendu des tâches en attente
     renderPendingTasks() {
         const container = document.getElementById('pendingTasks');
-        const emptyState = document.getElementById('emptyPendingTasks');
+        const emptyState = document.getElementById('pendingEmpty');
+        
+        if (!container || !emptyState) return;
 
         if (this.data.pendingTasks.length === 0) {
             container.innerHTML = '';
             emptyState.style.display = 'block';
-            return;
+        } else {
+            emptyState.style.display = 'none';
+            container.innerHTML = this.data.pendingTasks.map(task => this.createTaskCard(task, 'pending')).join('');
+            this.bindTaskActions(container);
         }
-
-        emptyState.style.display = 'none';
-        container.innerHTML = this.data.pendingTasks.map(task => this.createTaskCard(task, 'pending')).join('');
     }
 
     // Rendu des tâches terminées
     renderCompletedTasks() {
         const container = document.getElementById('completedTasks');
-        const emptyState = document.getElementById('emptyCompletedTasks');
+        const emptyState = document.getElementById('completedEmpty');
+        
+        if (!container || !emptyState) return;
+        
         const completedTasks = this.data.tasks.filter(task => task.status === 'completed');
 
         if (completedTasks.length === 0) {
             container.innerHTML = '';
             emptyState.style.display = 'block';
-            return;
+        } else {
+            emptyState.style.display = 'none';
+            container.innerHTML = completedTasks.map(task => this.createTaskCard(task, 'completed')).join('');
+            this.bindTaskActions(container);
         }
-
-        emptyState.style.display = 'none';
-        container.innerHTML = completedTasks.map(task => this.createTaskCard(task, 'completed')).join('');
     }
 
-    // Créer une carte de tâche
+    // Créer une carte de tâche optimisée mobile
     createTaskCard(task, type) {
         const isCurrentUserTask = type === 'pending' && task.proposedBy === this.currentUser;
-        const hasValidated = type === 'pending' && task.validations.includes(this.currentUser);
+        const hasValidated = type === 'pending' && task.validations && task.validations.includes(this.currentUser);
         const needsValidation = type === 'pending' && !hasValidated;
         const validationCount = task.validations ? task.validations.length : 0;
 
@@ -251,61 +372,61 @@ class TaskManager {
 
             if (needsValidation && !isCurrentUserTask) {
                 actions = `
-                    <button class="btn btn-success btn-sm" onclick="taskManager.validateTask('${task.id}')">
+                    <button class="task-btn task-btn-success" data-action="validate" data-task-id="${task.id}">
                         <i class="fas fa-check"></i> Valider
                     </button>
-                    <button class="btn btn-danger btn-sm" onclick="taskManager.rejectTask('${task.id}')">
+                    <button class="task-btn task-btn-danger" data-action="reject" data-task-id="${task.id}">
                         <i class="fas fa-times"></i> Rejeter
                     </button>
                 `;
             } else if (hasValidated) {
                 actions = `
-                    <span class="btn btn-secondary btn-sm" disabled>
-                        <i class="fas fa-check"></i> Déjà validée
-                    </span>
+                    <button class="task-btn task-btn-secondary" disabled>
+                        <i class="fas fa-check"></i> Validée
+                    </button>
                 `;
             } else if (isCurrentUserTask) {
                 actions = `
-                    <span class="btn btn-secondary btn-sm" disabled>
+                    <button class="task-btn task-btn-secondary" disabled>
                         <i class="fas fa-clock"></i> En attente
-                    </span>
-                    <button class="btn btn-danger btn-sm" onclick="taskManager.deleteTask('${task.id}')">
+                    </button>
+                    <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}">
                         <i class="fas fa-trash"></i> Supprimer
                     </button>
                 `;
             }
         } else if (type === 'active') {
             actions = `
-                <button class="btn btn-success btn-sm" onclick="taskManager.completeTask('${task.id}')">
+                <button class="task-btn task-btn-success" data-action="complete" data-task-id="${task.id}">
                     <i class="fas fa-check"></i> Terminer
                 </button>
-                <button class="btn btn-danger btn-sm" onclick="taskManager.deleteTask('${task.id}')">
+                <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}">
                     <i class="fas fa-trash"></i> Supprimer
                 </button>
             `;
         } else if (type === 'completed') {
             actions = `
-                <button class="btn btn-danger btn-sm" onclick="taskManager.deleteTask('${task.id}')">
+                <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}">
                     <i class="fas fa-trash"></i> Supprimer
                 </button>
             `;
         }
 
         const dateInfo = type === 'pending' 
-            ? `Proposée par ${task.proposedBy} le ${new Date(task.proposedAt).toLocaleDateString()}`
+            ? `Proposée par ${task.proposedBy} le ${this.formatDate(task.proposedAt)}`
             : type === 'completed'
-            ? `Terminée par ${task.completedBy} le ${new Date(task.completedAt).toLocaleDateString()}`
-            : `Approuvée le ${new Date(task.approvedAt).toLocaleDateString()}`;
+            ? `Terminée par ${task.completedBy} le ${this.formatDate(task.completedAt)}`
+            : `Approuvée le ${this.formatDate(task.approvedAt)}`;
 
         return `
             <div class="task-card ${type}">
                 <div class="task-header">
-                    <h3 class="task-title">${task.title}</h3>
+                    <h3 class="task-title">${this.escapeHtml(task.title)}</h3>
                 </div>
-                ${task.description ? `<p class="task-description">${task.description}</p>` : ''}
+                ${task.description ? `<div class="task-description">${this.escapeHtml(task.description)}</div>` : ''}
                 ${validationStatus}
                 <div class="task-meta">
-                    <div>${dateInfo}</div>
+                    ${dateInfo}
                 </div>
                 <div class="task-actions">
                     ${actions}
@@ -314,34 +435,77 @@ class TaskManager {
         `;
     }
 
-    // Ouvrir le modal de nouvelle tâche
-    openTaskModal() {
-        document.getElementById('taskModal').classList.add('show');
-        document.getElementById('taskTitle').focus();
+    // Lier les actions des tâches avec gestion touch
+    bindTaskActions(container) {
+        container.querySelectorAll('[data-action]').forEach(button => {
+            this.addTouchHandler(button, () => {
+                const action = button.dataset.action;
+                const taskId = button.dataset.taskId;
+                
+                switch (action) {
+                    case 'validate':
+                        this.validateTask(taskId);
+                        break;
+                    case 'reject':
+                        this.rejectTask(taskId);
+                        break;
+                    case 'complete':
+                        this.completeTask(taskId);
+                        break;
+                    case 'delete':
+                        this.deleteTask(taskId);
+                        break;
+                }
+            });
+        });
     }
 
-    // Fermer le modal de tâche
+    // Gestion des modales
+    openTaskModal() {
+        const modal = document.getElementById('taskModal');
+        if (modal) {
+            modal.classList.add('show');
+            const titleInput = document.getElementById('taskTitle');
+            if (titleInput) {
+                setTimeout(() => titleInput.focus(), 100);
+            }
+        }
+    }
+
     closeTaskModal() {
-        document.getElementById('taskModal').classList.remove('show');
-        document.getElementById('taskForm').reset();
+        const modal = document.getElementById('taskModal');
+        const form = document.getElementById('taskForm');
+        
+        if (modal) {
+            modal.classList.remove('show');
+        }
+        
+        if (form) {
+            form.reset();
+        }
     }
 
     // Soumettre une nouvelle tâche
     async submitNewTask() {
-        const title = document.getElementById('taskTitle').value.trim();
-        const description = document.getElementById('taskDescription').value.trim();
+        const titleInput = document.getElementById('taskTitle');
+        const descriptionInput = document.getElementById('taskDescription');
+        
+        if (!titleInput) return;
+        
+        const title = titleInput.value.trim();
+        const description = descriptionInput ? descriptionInput.value.trim() : '';
 
         if (!title) {
             this.showNotification('warning', 'Erreur', 'Le titre de la tâche est requis');
             return;
         }
 
+        this.showLoading(true);
+        
         try {
             const response = await fetch('/api/tasks/propose', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     title,
                     description,
@@ -351,198 +515,171 @@ class TaskManager {
 
             if (response.ok) {
                 this.closeTaskModal();
-                this.showNotification('success', 'Tâche proposée', 'Votre tâche a été proposée et attend une validation');
+                this.showNotification('success', 'Tâche proposée', 'En attente de validation');
+                this.vibrate();
             } else {
                 const error = await response.json();
                 this.showNotification('error', 'Erreur', error.error || 'Erreur lors de la proposition');
             }
         } catch (error) {
-            console.error('Erreur lors de la soumission:', error);
+            console.error('❌ Erreur proposition:', error);
             this.showNotification('error', 'Erreur', 'Erreur de connexion');
+        } finally {
+            this.showLoading(false);
         }
     }
 
-    // Valider une tâche
+    // Actions sur les tâches
     async validateTask(taskId) {
-        try {
-            const response = await fetch(`/api/tasks/${taskId}/validate`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUser
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de la validation');
-            }
-        } catch (error) {
-            console.error('Erreur lors de la validation:', error);
-            this.showNotification('error', 'Erreur', 'Erreur de connexion');
-        }
+        await this.performTaskAction(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
     }
 
-    // Rejeter une tâche
     async rejectTask(taskId) {
-        if (!confirm('Êtes-vous sûr de vouloir rejeter cette tâche ?')) {
-            return;
-        }
-
-        try {
-            const response = await fetch(`/api/tasks/${taskId}/reject`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUser
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors du rejet');
-            }
-        } catch (error) {
-            console.error('Erreur lors du rejet:', error);
-            this.showNotification('error', 'Erreur', 'Erreur de connexion');
-        }
+        if (!confirm('Rejeter cette tâche ?')) return;
+        await this.performTaskAction(`/api/tasks/${taskId}/reject`, 'POST', { userId: this.currentUser });
     }
 
-    // Terminer une tâche
     async completeTask(taskId) {
-        try {
-            const response = await fetch(`/api/tasks/${taskId}/complete`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUser
-                })
-            });
-
-            if (!response.ok) {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de la complétion');
-            }
-        } catch (error) {
-            console.error('Erreur lors de la complétion:', error);
-            this.showNotification('error', 'Erreur', 'Erreur de connexion');
-        }
+        await this.performTaskAction(`/api/tasks/${taskId}/complete`, 'POST', { userId: this.currentUser });
     }
 
-    // Supprimer une tâche
     async deleteTask(taskId) {
-        if (!confirm('Êtes-vous sûr de vouloir supprimer cette tâche ?')) {
-            return;
-        }
+        if (!confirm('Supprimer cette tâche définitivement ?')) return;
+        await this.performTaskAction(`/api/tasks/${taskId}`, 'DELETE', { userId: this.currentUser });
+    }
 
+    async performTaskAction(url, method, body) {
+        this.showLoading(true);
+        
         try {
-            const response = await fetch(`/api/tasks/${taskId}`, {
-                method: 'DELETE',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    userId: this.currentUser
-                })
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
             });
 
             if (!response.ok) {
                 const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de la suppression');
+                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de l\'action');
             }
         } catch (error) {
-            console.error('Erreur lors de la suppression:', error);
+            console.error('❌ Erreur action:', error);
             this.showNotification('error', 'Erreur', 'Erreur de connexion');
+        } finally {
+            this.showLoading(false);
         }
     }
 
-    // Exporter les données
+    // Export des données
     async exportData() {
         try {
             const response = await fetch('/api/export');
             if (response.ok) {
                 const blob = await response.blob();
-                const url = window.URL.createObjectURL(blob);
+                const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `tasks-export-${new Date().toISOString().split('T')[0]}.json`;
+                a.download = `maya-rayanha-taches-${new Date().toISOString().split('T')[0]}.json`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
-                window.URL.revokeObjectURL(url);
-                this.showNotification('success', 'Export réussi', 'Vos données ont été exportées');
+                URL.revokeObjectURL(url);
+                this.showNotification('success', 'Export réussi', 'Fichier téléchargé');
             }
         } catch (error) {
-            console.error('Erreur lors de l\'export:', error);
+            console.error('❌ Erreur export:', error);
             this.showNotification('error', 'Erreur', 'Erreur lors de l\'export');
         }
     }
 
-    // Importer des données
+    // Import des données
     async importData(file) {
         if (!file) return;
 
+        this.showLoading(true);
+        
         try {
             const text = await file.text();
             const data = JSON.parse(text);
 
             const response = await fetch('/api/import', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
+                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(data)
             });
 
             if (response.ok) {
-                this.showNotification('success', 'Import réussi', 'Les données ont été importées');
+                this.showNotification('success', 'Import réussi', 'Données importées');
+                this.vibrate();
             } else {
                 const error = await response.json();
-                this.showNotification('error', 'Erreur d\'import', error.error || 'Format de fichier invalide');
+                this.showNotification('error', 'Erreur d\'import', error.error || 'Format invalide');
             }
         } catch (error) {
-            console.error('Erreur lors de l\'import:', error);
-            this.showNotification('error', 'Erreur', 'Fichier invalide ou erreur de lecture');
+            console.error('❌ Erreur import:', error);
+            this.showNotification('error', 'Erreur', 'Fichier invalide');
+        } finally {
+            this.showLoading(false);
+            // Réinitialiser l'input file
+            const importFile = document.getElementById('importFile');
+            if (importFile) importFile.value = '';
         }
-
-        // Réinitialiser l'input file
-        document.getElementById('importFile').value = '';
     }
 
-    // Mettre à jour le compteur de tâches en attente
-    updatePendingCount() {
-        document.getElementById('pendingCount').textContent = this.data.pendingTasks.length;
+    // Mettre à jour les badges de compteurs
+    updateBadges() {
+        const activeBadge = document.getElementById('activeBadge');
+        const pendingBadge = document.getElementById('pendingBadge');
+        
+        if (activeBadge) {
+            const activeCount = this.data.tasks.filter(task => task.status !== 'completed').length;
+            activeBadge.textContent = activeCount;
+            activeBadge.style.display = activeCount > 0 ? 'flex' : 'none';
+        }
+        
+        if (pendingBadge) {
+            const pendingCount = this.data.pendingTasks.length;
+            pendingBadge.textContent = pendingCount;
+            pendingBadge.style.display = pendingCount > 0 ? 'flex' : 'none';
+        }
     }
 
     // Mettre à jour le statut de connexion
     updateConnectionStatus(connected) {
         const status = document.getElementById('connectionStatus');
+        if (!status) return;
+        
         const icon = status.querySelector('i');
         const text = status.querySelector('span');
-
+        
         if (connected) {
             status.classList.remove('disconnected');
-            icon.className = 'fas fa-wifi';
-            text.textContent = 'Connecté';
+            if (icon) icon.className = 'fas fa-wifi';
+            if (text) text.textContent = 'Connecté';
         } else {
             status.classList.add('disconnected');
-            icon.className = 'fas fa-exclamation-triangle';
-            text.textContent = 'Déconnecté';
+            if (icon) icon.className = 'fas fa-exclamation-triangle';
+            if (text) text.textContent = 'Déconnecté';
         }
     }
 
-    // Afficher une notification
+    // Afficher/masquer le loading
+    showLoading(show) {
+        this.isLoading = show;
+        const overlay = document.getElementById('loadingOverlay');
+        if (overlay) {
+            overlay.style.display = show ? 'flex' : 'none';
+        }
+    }
+
+    // Afficher une notification toast
     showNotification(type, title, message) {
         const container = document.getElementById('notifications');
+        if (!container) return;
+        
         const notification = document.createElement('div');
         notification.className = `notification ${type}`;
-
+        
         const icons = {
             success: 'fa-check-circle',
             error: 'fa-exclamation-circle',
@@ -554,18 +691,20 @@ class TaskManager {
             <div class="notification-content">
                 <i class="fas ${icons[type]} notification-icon"></i>
                 <div class="notification-text">
-                    <div class="notification-title">${title}</div>
-                    <div class="notification-message">${message}</div>
+                    <div class="notification-title">${this.escapeHtml(title)}</div>
+                    <div class="notification-message">${this.escapeHtml(message)}</div>
                 </div>
             </div>
         `;
 
         container.appendChild(notification);
 
-        // Animer l'apparition
-        setTimeout(() => notification.classList.add('show'), 10);
+        // Animation d'apparition
+        requestAnimationFrame(() => {
+            notification.classList.add('show');
+        });
 
-        // Supprimer automatiquement après 5 secondes
+        // Auto-suppression après 4 secondes
         setTimeout(() => {
             notification.classList.remove('show');
             setTimeout(() => {
@@ -573,12 +712,66 @@ class TaskManager {
                     container.removeChild(notification);
                 }
             }, 300);
-        }, 5000);
+        }, 4000);
+    }
+
+    // Utilitaires
+    formatDate(dateString) {
+        const date = new Date(dateString);
+        return date.toLocaleDateString('fr-FR', {
+            day: 'numeric',
+            month: 'short',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+    }
+
+    escapeHtml(text) {
+        const map = {
+            '&': '&amp;',
+            '<': '&lt;',
+            '>': '&gt;',
+            '"': '&quot;',
+            "'": '&#039;'
+        };
+        return text.replace(/[&<>"']/g, m => map[m]);
     }
 }
 
-// Initialiser l'application
-const taskManager = new TaskManager();
+// Initialisation de l'application quand le DOM est prêt
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('🚀 Initialisation de l\'application mobile');
+    window.taskManager = new MobileTaskManager();
+});
 
-// Exposer globalement pour les handlers onclick
-window.taskManager = taskManager;
+// Gestion des erreurs globales
+window.addEventListener('error', (event) => {
+    console.error('❌ Erreur globale:', event.error);
+});
+
+window.addEventListener('unhandledrejection', (event) => {
+    console.error('❌ Promise rejetée:', event.reason);
+});
+
+// Gestion de la visibilité de la page (économie de batterie)
+document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+        console.log('📱 Application en arrière-plan');
+    } else {
+        console.log('📱 Application au premier plan');
+        if (window.taskManager && window.taskManager.socket && !window.taskManager.socket.connected) {
+            window.taskManager.socket.connect();
+        }
+    }
+});
+
+// Service Worker pour PWA (si disponible)
+if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').then(() => {
+            console.log('📱 Service Worker enregistré');
+        }).catch(() => {
+            console.log('📱 Service Worker non disponible');
+        });
+    });
+}

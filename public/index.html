@@ -2,130 +2,178 @@
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Gestionnaire de Tâches Collaboratif</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Maya & Rayanha - Tâches Partagées</title>
+    <meta name="description" content="Application collaborative pour Maya l'abeille et Rayanha">
+    <meta name="theme-color" content="#4F46E5">
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="/manifest.json">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <meta name="apple-mobile-web-app-title" content="Maya & Rayanha">
+    
+    <!-- Styles -->
     <link rel="stylesheet" href="css/styles.css">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Icons -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
 </head>
 <body>
-    <div class="app-container">
-        <!-- Header -->
-        <header class="app-header">
+    <div class="app">
+        <!-- Header fixe avec sélection utilisateur -->
+        <header class="header">
             <div class="header-content">
-                <h1><i class="fas fa-users"></i> Gestionnaire de Tâches Collaboratif</h1>
-                <div class="user-selector">
-                    <label for="currentUser">Vous êtes :</label>
-                    <select id="currentUser">
-                        <option value="Maya l'abeille">Maya l'abeille</option>
-                        <option value="Rayanha">Rayanha</option>
+                <h1 class="header-title">
+                    <i class="fas fa-tasks"></i>
+                    Tâches Partagées
+                </h1>
+                <div class="user-select">
+                    <select id="currentUser" class="user-selector">
+                        <option value="Maya l'abeille">🐝 Maya l'abeille</option>
+                        <option value="Rayanha">🌟 Rayanha</option>
                     </select>
                 </div>
             </div>
         </header>
 
-        <!-- Navigation -->
-        <nav class="app-nav">
-            <div class="nav-tabs">
-                <button class="nav-tab active" data-tab="tasks">
-                    <i class="fas fa-list"></i> Tâches Actives
-                </button>
-                <button class="nav-tab" data-tab="pending">
-                    <i class="fas fa-clock"></i> En Attente <span id="pendingCount" class="badge">0</span>
-                </button>
-                <button class="nav-tab" data-tab="completed">
-                    <i class="fas fa-check-circle"></i> Terminées
-                </button>
-                <button class="nav-tab" data-tab="settings">
-                    <i class="fas fa-cog"></i> Paramètres
-                </button>
-            </div>
+        <!-- Navigation par onglets -->
+        <nav class="nav-tabs">
+            <button class="nav-tab active" data-tab="active" type="button">
+                <i class="fas fa-list-check"></i>
+                <span>Actives</span>
+                <span class="badge" id="activeBadge">0</span>
+            </button>
+            <button class="nav-tab" data-tab="pending" type="button">
+                <i class="fas fa-clock"></i>
+                <span>En attente</span>
+                <span class="badge" id="pendingBadge">0</span>
+            </button>
+            <button class="nav-tab" data-tab="completed" type="button">
+                <i class="fas fa-check-circle"></i>
+                <span>Terminées</span>
+            </button>
+            <button class="nav-tab" data-tab="settings" type="button">
+                <i class="fas fa-cog"></i>
+                <span>Options</span>
+            </button>
         </nav>
 
         <!-- Contenu principal -->
         <main class="main-content">
+            
             <!-- Section Tâches Actives -->
-            <section id="tasks-section" class="content-section active">
+            <section id="active-content" class="tab-content active">
                 <div class="section-header">
-                    <h2><i class="fas fa-list"></i> Tâches Actives</h2>
-                    <button id="addTaskBtn" class="btn btn-primary">
-                        <i class="fas fa-plus"></i> Nouvelle Tâche
+                    <h2 class="section-title">
+                        <i class="fas fa-list-check"></i>
+                        Tâches Actives
+                    </h2>
+                    <button id="addTaskBtn" class="btn-primary" type="button">
+                        <i class="fas fa-plus"></i>
+                        Nouvelle Tâche
                     </button>
                 </div>
                 
-                <div class="tasks-grid" id="activeTasks">
-                    <!-- Les tâches actives seront ajoutées ici dynamiquement -->
+                <div class="tasks-container" id="activeTasks">
+                    <!-- Tâches actives générées dynamiquement -->
                 </div>
-
-                <div class="empty-state" id="emptyActiveTasks" style="display: none;">
-                    <i class="fas fa-clipboard-list"></i>
+                
+                <div class="empty-state" id="activeEmpty" style="display: none;">
+                    <div class="empty-icon">
+                        <i class="fas fa-clipboard-list"></i>
+                    </div>
                     <h3>Aucune tâche active</h3>
-                    <p>Commencez par proposer une nouvelle tâche !</p>
+                    <p>Proposez une nouvelle tâche pour commencer !</p>
                 </div>
             </section>
 
             <!-- Section Tâches en Attente -->
-            <section id="pending-section" class="content-section">
+            <section id="pending-content" class="tab-content">
                 <div class="section-header">
-                    <h2><i class="fas fa-clock"></i> Tâches en Attente de Validation</h2>
+                    <h2 class="section-title">
+                        <i class="fas fa-clock"></i>
+                        Tâches en Attente
+                    </h2>
                 </div>
                 
-                <div class="tasks-grid" id="pendingTasks">
-                    <!-- Les tâches en attente seront ajoutées ici dynamiquement -->
+                <div class="tasks-container" id="pendingTasks">
+                    <!-- Tâches en attente générées dynamiquement -->
                 </div>
-
-                <div class="empty-state" id="emptyPendingTasks" style="display: none;">
-                    <i class="fas fa-hourglass-half"></i>
+                
+                <div class="empty-state" id="pendingEmpty" style="display: none;">
+                    <div class="empty-icon">
+                        <i class="fas fa-hourglass-half"></i>
+                    </div>
                     <h3>Aucune tâche en attente</h3>
-                    <p>Toutes les tâches proposées ont été traitées.</p>
+                    <p>Toutes les propositions ont été traitées.</p>
                 </div>
             </section>
 
             <!-- Section Tâches Terminées -->
-            <section id="completed-section" class="content-section">
+            <section id="completed-content" class="tab-content">
                 <div class="section-header">
-                    <h2><i class="fas fa-check-circle"></i> Tâches Terminées</h2>
+                    <h2 class="section-title">
+                        <i class="fas fa-check-circle"></i>
+                        Tâches Terminées
+                    </h2>
                 </div>
                 
-                <div class="tasks-grid" id="completedTasks">
-                    <!-- Les tâches terminées seront ajoutées ici dynamiquement -->
+                <div class="tasks-container" id="completedTasks">
+                    <!-- Tâches terminées générées dynamiquement -->
                 </div>
-
-                <div class="empty-state" id="emptyCompletedTasks" style="display: none;">
-                    <i class="fas fa-medal"></i>
+                
+                <div class="empty-state" id="completedEmpty" style="display: none;">
+                    <div class="empty-icon">
+                        <i class="fas fa-trophy"></i>
+                    </div>
                     <h3>Aucune tâche terminée</h3>
-                    <p>Les tâches terminées apparaîtront ici.</p>
+                    <p>Les tâches accomplies apparaîtront ici.</p>
                 </div>
             </section>
 
-            <!-- Section Paramètres -->
-            <section id="settings-section" class="content-section">
+            <!-- Section Options -->
+            <section id="settings-content" class="tab-content">
                 <div class="section-header">
-                    <h2><i class="fas fa-cog"></i> Paramètres et Export/Import</h2>
+                    <h2 class="section-title">
+                        <i class="fas fa-cog"></i>
+                        Options & Données
+                    </h2>
                 </div>
                 
                 <div class="settings-grid">
                     <div class="setting-card">
-                        <h3><i class="fas fa-download"></i> Exporter les données</h3>
-                        <p>Téléchargez toutes vos tâches au format JSON pour les sauvegarder ou les partager.</p>
-                        <button id="exportBtn" class="btn btn-primary">
-                            <i class="fas fa-download"></i> Exporter
+                        <div class="setting-header">
+                            <i class="fas fa-download"></i>
+                            <h3>Exporter les données</h3>
+                        </div>
+                        <p>Sauvegardez toutes vos tâches dans un fichier JSON.</p>
+                        <button id="exportBtn" class="btn-secondary" type="button">
+                            <i class="fas fa-download"></i>
+                            Télécharger
                         </button>
                     </div>
 
                     <div class="setting-card">
-                        <h3><i class="fas fa-upload"></i> Importer des données</h3>
-                        <p>Importez un fichier JSON de tâches précédemment exporté.</p>
+                        <div class="setting-header">
+                            <i class="fas fa-upload"></i>
+                            <h3>Importer des données</h3>
+                        </div>
+                        <p>Restaurez des tâches depuis un fichier précédemment exporté.</p>
                         <input type="file" id="importFile" accept=".json" style="display: none;">
-                        <button id="importBtn" class="btn btn-secondary">
-                            <i class="fas fa-upload"></i> Importer
+                        <button id="importBtn" class="btn-secondary" type="button">
+                            <i class="fas fa-upload"></i>
+                            Choisir fichier
                         </button>
                     </div>
 
                     <div class="setting-card">
-                        <h3><i class="fas fa-info-circle"></i> Informations</h3>
-                        <p>Gestionnaire de Tâches Collaboratif v1.0</p>
-                        <p>Application web pour gérer des tâches partagées avec validation bipartite.</p>
+                        <div class="setting-header">
+                            <i class="fas fa-info-circle"></i>
+                            <h3>À propos</h3>
+                        </div>
+                        <p>Application collaborative pour Maya l'abeille et Rayanha.</p>
+                        <p class="version">Version 2.0 - Optimisée Mobile</p>
                     </div>
                 </div>
             </section>
@@ -133,46 +181,78 @@
 
         <!-- Modal Nouvelle Tâche -->
         <div id="taskModal" class="modal">
-            <div class="modal-content">
+            <div class="modal-backdrop"></div>
+            <div class="modal-container">
                 <div class="modal-header">
-                    <h3><i class="fas fa-plus"></i> Proposer une nouvelle tâche</h3>
-                    <button class="modal-close">&times;</button>
+                    <h3 class="modal-title">
+                        <i class="fas fa-plus-circle"></i>
+                        Nouvelle Tâche
+                    </h3>
+                    <button class="modal-close" type="button" id="closeModal">
+                        <i class="fas fa-times"></i>
+                    </button>
                 </div>
-                <div class="modal-body">
-                    <form id="taskForm">
-                        <div class="form-group">
-                            <label for="taskTitle">Titre de la tâche *</label>
-                            <input type="text" id="taskTitle" required placeholder="Ex: Faire les courses">
-                        </div>
-                        
-                        <div class="form-group">
-                            <label for="taskDescription">Description (optionnel)</label>
-                            <textarea id="taskDescription" rows="3" placeholder="Décrivez la tâche en détail..."></textarea>
-                        </div>
-                        
-
-                        
-                        <div class="form-actions">
-                            <button type="button" class="btn btn-secondary" id="cancelTaskBtn">
-                                Annuler
-                            </button>
-                            <button type="submit" class="btn btn-primary">
-                                <i class="fas fa-paper-plane"></i> Proposer la tâche
-                            </button>
-                        </div>
-                    </form>
-                </div>
+                
+                <form id="taskForm" class="modal-body">
+                    <div class="input-group">
+                        <label for="taskTitle" class="input-label">
+                            <i class="fas fa-edit"></i>
+                            Titre de la tâche *
+                        </label>
+                        <input 
+                            type="text" 
+                            id="taskTitle" 
+                            class="input-field"
+                            placeholder="Ex: Faire les courses"
+                            required
+                            maxlength="100"
+                        >
+                    </div>
+                    
+                    <div class="input-group">
+                        <label for="taskDescription" class="input-label">
+                            <i class="fas fa-align-left"></i>
+                            Description (optionnel)
+                        </label>
+                        <textarea 
+                            id="taskDescription" 
+                            class="input-field textarea"
+                            placeholder="Ajoutez des détails sur cette tâche..."
+                            rows="3"
+                            maxlength="500"
+                        ></textarea>
+                    </div>
+                    
+                    <div class="modal-actions">
+                        <button type="button" class="btn-secondary" id="cancelTask">
+                            Annuler
+                        </button>
+                        <button type="submit" class="btn-primary">
+                            <i class="fas fa-paper-plane"></i>
+                            Proposer
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
 
-        <!-- Notifications -->
-        <div id="notifications" class="notifications-container">
-            <!-- Les notifications apparaîtront ici -->
+        <!-- Notifications Toast -->
+        <div id="notifications" class="notifications">
+            <!-- Notifications générées dynamiquement -->
         </div>
 
         <!-- Indicateur de connexion -->
         <div id="connectionStatus" class="connection-status">
-            <i class="fas fa-wifi"></i> <span>Connecté</span>
+            <i class="fas fa-wifi"></i>
+            <span>Connecté</span>
+        </div>
+
+        <!-- Loading overlay -->
+        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
+            <div class="loading-spinner">
+                <i class="fas fa-spinner fa-spin"></i>
+                <p>Chargement...</p>
+            </div>
         </div>
     </div>
 
