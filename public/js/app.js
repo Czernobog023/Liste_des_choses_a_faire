@@ -1,374 +1,281 @@
-// Application Collaborative Maya & Rayanha - Version Finale Stable
-class MobileTaskManager {
+// Application Collaborative Maya & Rayanha - Version Client-Side Stable
+class TaskManager {
     constructor() {
-        this.currentUser = localStorage.getItem('currentUser') || 'Maya l\'abeille';
-        this.sessionId = this.generateSessionId();
+        // Initialise l'état de l'application
+        this.currentUser = 'Maya';
         this.data = {
-            users: ['Maya l\'abeille', 'Rayanha'],
-            tasks: [],
-            pendingTasks: []
+            tasks: [] // Une seule liste de tâches maintenant
         };
-        this.db = null;
-        this.pollingInterval = null;
-        
-        this.init();
-    }
-    
-    generateSessionId() {
-        const SHARED_SESSION_ID = 'maya_rayanha_shared_session_v3';
-        localStorage.setItem('maya_rayanha_session_id', SHARED_SESSION_ID);
-        return SHARED_SESSION_ID;
+        // Charge les éléments du DOM
+        this.elements = this._getElements();
+        // Initialisation complète
+        this._init();
     }
 
-    async init() {
-        console.log('🚀 Initialisation...');
-        this.setupEventListeners();
-        
-        await this.loadLocalData();
-        this.renderAllTasks();
-        this.updateBadges();
-        
-        try {
-            await this.syncWithServer();
-            this.showNotification('success', 'Connecté', 'Application synchronisée !');
-        } catch (error) {
-            this.showNotification('warning', 'Mode hors ligne', 'Impossible de synchroniser.');
-        }
-
-        this.startPolling();
+    /**
+     * Méthode d'initialisation principale
+     */
+    _init() {
+        console.log("🚀 Application initialisée");
+        this._loadState(); // Charger les données sauvegardées
+        this._setupEventListeners(); // Attacher les écouteurs d'événements
+        this._render(); // Afficher l'état initial
     }
 
-    setupEventListeners() {
-        const userSelector = document.getElementById('currentUser');
-        if (userSelector) {
-            userSelector.value = this.currentUser;
-            userSelector.addEventListener('change', (e) => {
-                this.currentUser = e.target.value;
-                localStorage.setItem('currentUser', this.currentUser);
-                this.renderAllTasks();
+    /**
+     * Récupère tous les éléments du DOM nécessaires
+     */
+    _getElements() {
+        return {
+            currentUserSelect: document.getElementById('currentUser'),
+            tabs: document.querySelectorAll('.tab-link'),
+            tabContents: document.querySelectorAll('.tab-content'),
+            pendingTasksContainer: document.getElementById('pendingTasksContainer'),
+            activeTasksContainer: document.getElementById('activeTasksContainer'),
+            completedTasksContainer: document.getElementById('completedTasksContainer'),
+            pendingEmpty: document.getElementById('pendingEmpty'),
+            activeEmpty: document.getElementById('activeEmpty'),
+            completedEmpty: document.getElementById('completedEmpty'),
+            pendingBadge: document.getElementById('pendingBadge'),
+            activeBadge: document.getElementById('activeBadge'),
+            addTaskBtn: document.getElementById('addTaskBtn'),
+            modal: document.getElementById('taskModal'),
+            modalTitle: document.getElementById('modalTitle'),
+            closeModalBtn: document.getElementById('closeModalBtn'),
+            taskForm: document.getElementById('taskForm'),
+            taskTitleInput: document.getElementById('taskTitleInput'),
+            taskDescInput: document.getElementById('taskDescInput')
+        };
+    }
+
+    /**
+     * Attache tous les écouteurs d'événements
+     */
+    _setupEventListeners() {
+        // Changement d'utilisateur
+        this.elements.currentUserSelect.addEventListener('change', () => {
+            this.currentUser = this.elements.currentUserSelect.value;
+            this._saveState();
+            this._render();
+        });
+
+        // Clic sur les onglets
+        this.elements.tabs.forEach(tab => {
+            tab.addEventListener('click', () => {
+                this._switchTab(tab.dataset.tab);
+            });
+        });
+
+        // Ouvre la modale
+        this.elements.addTaskBtn.addEventListener('click', () => this._openModal());
+
+        // Ferme la modale
+        this.elements.closeModalBtn.addEventListener('click', () => this._closeModal());
+        this.elements.modal.addEventListener('click', (e) => {
+            if (e.target === this.elements.modal) this._closeModal();
+        });
+
+        // Soumission du formulaire
+        this.elements.taskForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const title = this.elements.taskTitleInput.value.trim();
+            const description = this.elements.taskDescInput.value.trim();
+            if (title) {
+                this.proposeTask(title, description);
+                this._closeModal();
+            }
+        });
+    }
+
+    /**
+     * Logique de rendu principale, appelée après chaque changement
+     */
+    _render() {
+        console.log("🔄 Rendu de l'interface...");
+
+        // Filtrer les tâches pour chaque section
+        const pendingTasks = this.data.tasks.filter(t => t.status === 'pending');
+        const activeTasks = this.data.tasks.filter(t => t.status === 'active');
+        const completedTasks = this.data.tasks.filter(t => t.status === 'completed');
+
+        // Mettre à jour les badges
+        this.elements.pendingBadge.textContent = pendingTasks.length;
+        this.elements.activeBadge.textContent = activeTasks.length;
+        this.elements.pendingBadge.style.display = pendingTasks.length > 0 ? 'inline-block' : 'none';
+        this.elements.activeBadge.style.display = activeTasks.length > 0 ? 'inline-block' : 'none';
+
+        // Afficher les tâches ou l'état vide
+        this._renderTaskList(this.elements.pendingTasksContainer, pendingTasks, this.elements.pendingEmpty);
+        this._renderTaskList(this.elements.activeTasksContainer, activeTasks, this.elements.activeEmpty);
+        this._renderTaskList(this.elements.completedTasksContainer, completedTasks, this.elements.completedEmpty);
+    }
+
+    /**
+     * Affiche une liste de tâches dans son conteneur
+     */
+    _renderTaskList(container, tasks, emptyState) {
+        container.innerHTML = ''; // Vider la liste
+        if (tasks.length === 0) {
+            emptyState.style.display = 'block';
+        } else {
+            emptyState.style.display = 'none';
+            tasks.forEach(task => {
+                container.appendChild(this._createTaskCard(task));
             });
         }
-        
-        document.querySelectorAll('.nav-tab').forEach(tab => this.addTouchHandler(tab, () => this.switchTab(tab.dataset.tab)));
-        
-        const addTaskBtn = document.getElementById('addTaskBtn');
-        if (addTaskBtn) this.addTouchHandler(addTaskBtn, () => this.openTaskModal());
-
-        const taskForm = document.getElementById('taskForm');
-        if (taskForm) taskForm.addEventListener('submit', async (e) => { 
-            e.preventDefault(); 
-            await this.submitNewTask(); 
-        });
-
-        const closeModal = document.getElementById('closeModal');
-        if (closeModal) this.addTouchHandler(closeModal, () => this.closeTaskModal());
-        const cancelTask = document.getElementById('cancelTask');
-        if (cancelTask) this.addTouchHandler(cancelTask, () => this.closeTaskModal());
     }
 
-    addTouchHandler(element, handler) {
-        if (!element) return;
-        element.addEventListener('click', (e) => {
-            e.stopPropagation(); 
-            handler(e);
-        });
-    }
+    /**
+     * Crée l'élément HTML pour une seule tâche
+     */
+    _createTaskCard(task) {
+        const card = document.createElement('div');
+        card.className = 'task-card';
 
-    // --- Fonctions de persistance des données ---
-    async initStorage() {
-        if (this.db) return;
-        return new Promise((resolve) => {
-            if (!window.indexedDB) return resolve();
-            const request = indexedDB.open('MayaRayanhaDB', 3);
-            request.onerror = () => resolve();
-            request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
-            request.onupgradeneeded = (e) => {
-                if (!e.target.result.objectStoreNames.contains('appData')) {
-                    e.target.result.createObjectStore('appData', { keyPath: 'key' });
+        const isProposer = task.proposer === this.currentUser;
+        let actionsHtml = '';
+
+        switch (task.status) {
+            case 'pending':
+                if (!isProposer) {
+                    actionsHtml = `<button class="btn btn-success" data-action="validate" data-id="${task.id}"><i class="fas fa-check"></i> Valider</button>
+                                   <button class="btn btn-danger" data-action="reject" data-id="${task.id}"><i class="fas fa-times"></i> Rejeter</button>`;
+                } else {
+                    actionsHtml = `<button class="btn" disabled><i class="fas fa-clock"></i> En attente</button>
+                                   <button class="btn btn-danger" data-action="delete" data-id="${task.id}"><i class="fas fa-trash"></i> Annuler</button>`;
                 }
-            };
+                break;
+            case 'active':
+                actionsHtml = `<button class="btn btn-primary" data-action="complete" data-id="${task.id}"><i class="fas fa-check-double"></i> Terminer</button>`;
+                break;
+            case 'completed':
+                actionsHtml = `<button class="btn btn-danger" data-action="delete" data-id="${task.id}"><i class="fas fa-trash"></i> Effacer</button>`;
+                break;
+        }
+
+        const descriptionHtml = task.description ? `<p class="task-description">${task.description}</p>` : '';
+        const metaInfo = task.status === 'pending' ? `Proposée par ${task.proposer}` : `Validée par ${task.validator}`;
+
+        card.innerHTML = `
+            <div class="task-header">${task.title}</div>
+            ${descriptionHtml}
+            <div class="task-meta">${metaInfo}</div>
+            <div class="task-actions">${actionsHtml}</div>
+        `;
+
+        // Attacher l'écouteur d'événement pour les boutons de la carte
+        card.querySelector('.task-actions').addEventListener('click', (e) => {
+            const action = e.target.dataset.action;
+            const id = e.target.dataset.id;
+            if (action && id) {
+                this._handleTaskAction(action, id);
+            }
         });
+
+        return card;
     }
 
-    async saveData() {
-        const dataToSave = { tasks: this.data.tasks, pendingTasks: this.data.pendingTasks };
-        try {
-            if (this.db) {
-                const tx = this.db.transaction('appData', 'readwrite');
-                tx.objectStore('appData').put({ key: 'data', value: dataToSave });
-                await tx.done;
-            } else {
-                localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
-            }
-            console.log('💾 Données sauvegardées localement.');
-        } catch (error) {
-            console.error('❌ Erreur de sauvegarde locale:', error);
-        }
-    }
+    /**
+     * Gère toutes les actions sur les tâches (valider, terminer, etc.)
+     */
+    _handleTaskAction(action, id) {
+        // Trouver la tâche correspondante
+        const taskIndex = this.data.tasks.findIndex(t => t.id === id);
+        if (taskIndex === -1) return;
 
-    async loadLocalData() {
-        try {
-            await this.initStorage();
-            let loadedData;
-            if (this.db) {
-                loadedData = await new Promise((resolve, reject) => {
-                    const transaction = this.db.transaction('appData', 'readonly');
-                    const request = transaction.objectStore('appData').get('data');
-                    transaction.oncomplete = () => resolve(request.result?.value);
-                    transaction.onerror = (event) => reject(event.target.error);
-                });
-            } else {
-                const localData = localStorage.getItem('maya_rayanha_data');
-                loadedData = localData ? JSON.parse(localData) : null;
-            }
-
-            if (loadedData) {
-                this.data.tasks = loadedData.tasks || [];
-                this.data.pendingTasks = loadedData.pendingTasks || [];
-                console.log('✅ Données locales chargées.');
-            }
-        } catch (error) {
-            console.error('❌ Erreur de chargement local:', error);
+        switch (action) {
+            case 'validate':
+                this.data.tasks[taskIndex].status = 'active';
+                this.data.tasks[taskIndex].validator = this.currentUser;
+                break;
+            case 'reject':
+            case 'delete':
+                this.data.tasks.splice(taskIndex, 1); // Supprimer la tâche
+                break;
+            case 'complete':
+                this.data.tasks[taskIndex].status = 'completed';
+                break;
         }
+
+        this._saveState(); // Sauvegarder le nouvel état
+        this._render();   // Mettre à jour l'affichage
     }
     
-    // --- Fonctions de synchronisation et de rendu ---
-    startPolling() { 
-        this.stopPolling(); // S'assurer qu'il n'y a pas de doublons
-        this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); 
-        console.log('🔄 Polling démarré (toutes les 10s)'); 
+    /**
+     * Sauvegarde l'état actuel dans le localStorage
+     */
+    _saveState() {
+        localStorage.setItem('taskAppData', JSON.stringify(this.data));
+        localStorage.setItem('taskAppUser', this.currentUser);
+        console.log("💾 État sauvegardé.");
     }
-    stopPolling() {
-        if (this.pollingInterval) {
-            clearInterval(this.pollingInterval);
-            this.pollingInterval = null;
-            console.log('⏹ Polling arrêté.');
+
+    /**
+     * Charge l'état depuis le localStorage
+     */
+    _loadState() {
+        const savedData = localStorage.getItem('taskAppData');
+        const savedUser = localStorage.getItem('taskAppUser');
+        if (savedData) {
+            this.data = JSON.parse(savedData);
         }
-    }
-
-    async syncWithServer() {
-        try {
-            const response = await fetch(`/api/data?sessionId=${this.sessionId}`);
-            if (!response.ok) throw new Error('Réponse serveur non valide');
-            
-            const serverData = await response.json();
-            
-            const localTempTasks = this.data.pendingTasks.filter(t => String(t.id).startsWith('temp_'));
-            
-            this.data.tasks = serverData.tasks || [];
-            this.data.pendingTasks = [...(serverData.pendingTasks || []), ...localTempTasks];
-            
-            await this.saveData();
-            this.renderAllTasks();
-            this.updateBadges();
-        } catch (error) {
-            console.warn('⚠️ Erreur de synchronisation:', error);
+        if (savedUser) {
+            this.currentUser = savedUser;
+            this.elements.currentUserSelect.value = savedUser;
         }
+        console.log("📂 État chargé.");
     }
 
-    switchTab(tabName) {
-        document.querySelectorAll('.nav-tab, .tab-content').forEach(el => el.classList.remove('active'));
-        const tabToActivate = document.querySelector(`[data-tab="${tabName}"]`);
-        const contentToActivate = document.getElementById(`${tabName}-content`);
-        if (tabToActivate) tabToActivate.classList.add('active');
-        if (contentToActivate) contentToActivate.classList.add('active');
+    /**
+     * Gère le changement d'onglet
+     */
+    _switchTab(tabName) {
+        this.elements.tabs.forEach(tab => tab.classList.remove('active'));
+        this.elements.tabContents.forEach(content => content.classList.remove('active'));
+
+        document.querySelector(`[data-tab="${tabName}"]`).classList.add('active');
+        document.getElementById(`${tabName}-content`).classList.add('active');
     }
 
-    renderAllTasks() {
-        this.renderTasks('active');
-        this.renderTasks('pending');
-        this.renderTasks('completed');
+    /**
+     * Gère l'ouverture et la fermeture de la modale
+     */
+    _openModal() {
+        this.elements.modal.classList.add('show');
+        this.elements.taskTitleInput.focus();
+    }
+    _closeModal() {
+        this.elements.modal.classList.remove('show');
+        this.elements.taskForm.reset();
     }
 
-    renderTasks(type) {
-        const container = document.getElementById(`${type}Tasks`);
-        const emptyState = document.getElementById(`${type}Empty`);
-        if (!container || !emptyState) return;
+    // --- ACTIONS UTILISATEUR PUBLIQUES ---
 
-        let tasksToRender = [];
-        if (type === 'pending') {
-            tasksToRender = this.data.pendingTasks;
-        } else {
-            tasksToRender = this.data.tasks.filter(task => (type === 'completed' ? task.status === 'completed' : task.status !== 'completed'));
-        }
-
-        emptyState.style.display = tasksToRender.length === 0 ? 'block' : 'none';
-        container.innerHTML = tasksToRender.map(task => this.createTaskCard(task, type)).join('');
-        this.bindTaskActions(container);
-    }
-
-    createTaskCard(task, type) {
-        const isProposer = task.proposedBy === this.currentUser;
-        const hasValidated = task.validations?.includes(this.currentUser);
-        let actions = '', validationStatus = '';
-
-        if (type === 'pending') {
-            const validationCount = task.validations?.length || 0;
-            validationStatus = `<div class="validation-status"><i class="fas fa-users"></i> Validation: ${validationCount}/1 requis</div>`;
-            if (!isProposer && !hasValidated) {
-                actions = `<button class="task-btn task-btn-success" data-action="validate" data-task-id="${task.id}"><i class="fas fa-check"></i> Valider</button>
-                           <button class="task-btn task-btn-danger" data-action="reject" data-task-id="${task.id}"><i class="fas fa-times"></i> Rejeter</button>`;
-            } else if (hasValidated) {
-                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-check"></i> Validée par vous</button>`;
-            } else {
-                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-clock"></i> En attente</button>
-                           <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Annuler</button>`;
-            }
-        } else if (type === 'active') {
-            actions = `<button class="task-btn task-btn-success" data-action="complete" data-task-id="${task.id}"><i class="fas fa-check"></i> Terminer</button>`;
-        } else {
-            actions = `<button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Effacer</button>`;
-        }
-        
-        const dateInfo = type === 'pending' ? `Proposée par ${task.proposedBy || '...'} le ${this.formatDate(task.proposedAt)}`
-                       : type === 'completed' ? `Terminée par ${task.completedBy || '...'} le ${this.formatDate(task.completedAt)}`
-                       : (task.approvedAt ? `Approuvée le ${this.formatDate(task.approvedAt)}` : 'Approuvée récemment');
-        
-        return `<div class="task-card ${type}"><div class="task-header"><h3 class="task-title">${this.escapeHtml(task.title || 'Tâche...')}</h3></div>${task.description ? `<div class="task-description">${this.escapeHtml(task.description)}</div>` : ''}${validationStatus}<div class="task-meta">${dateInfo}</div><div class="task-actions">${actions}</div></div>`;
-    }
-
-    bindTaskActions(container) {
-        container.querySelectorAll('[data-action]').forEach(button => {
-            this.addTouchHandler(button, () => {
-                const action = button.dataset.action;
-                const taskId = button.dataset.taskId;
-                // On appelle la fonction correspondante
-                this[action + 'Task'](taskId);
-            });
-        });
-    }
-    
-    // ========================================================================
-    // SECTION DES ACTIONS UTILISATEUR (LOGIQUE FINALE ET STABLE)
-    // ========================================================================
-    
-    async sendActionToServer(url, method, body) {
-        try {
-            const response = await fetch(url, {
-                method,
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ...body, sessionId: this.sessionId })
-            });
-            if (!response.ok) throw new Error('La réponse du serveur n\'est pas OK');
-            return await response.json();
-        } catch (error) {
-            console.error(`❌ Erreur réseau pour l'action ${method} ${url}:`, error);
-            this.showNotification('error', 'Erreur Réseau', 'L\'action n\'a pas pu être confirmée.');
-            return { success: false, error };
-        }
-    }
-
-    async submitNewTask() {
-        const title = document.getElementById('taskTitle').value.trim();
-        if (!title) return this.showNotification('warning', 'Erreur', 'Le titre est requis');
-        const description = document.getElementById('taskDescription').value.trim();
-        this.closeTaskModal();
-        this.stopPolling();
-
-        const newTask = { 
-            id: `temp_${Date.now()}`, title, description, 
-            proposedBy: this.currentUser, proposedAt: new Date().toISOString(), 
-            validations: [], status: 'pending'
+    /**
+     * Propose une nouvelle tâche
+     * @param {string} title - Le titre de la tâche
+     * @param {string} description - La description de la tâche
+     */
+    proposeTask(title, description) {
+        const newTask = {
+            id: `task_${Date.now()}`, // ID unique
+            title: title,
+            description: description,
+            proposer: this.currentUser,
+            validator: null,
+            status: 'pending' // 'pending', 'active', 'completed'
         };
-        this.data.pendingTasks.push(newTask);
-        this.renderAllTasks();
-        this.updateBadges();
-        await this.saveData();
 
-        await this.sendActionToServer('/api/tasks/propose', 'POST', { tempId: newTask.id, title, description, proposedBy: this.currentUser });
-        await this.syncWithServer();
-        this.startPolling();
+        this.data.tasks.push(newTask);
+        this._saveState();
+        this._render();
+
+        // ÉTAPE 2 : ICI, ON AJOUTERA L'APPEL AU SERVEUR (fetch)
+        console.log("Nouvelle tâche proposée :", newTask);
     }
-
-    async validateTask(taskId) {
-        const taskIndex = this.data.pendingTasks.findIndex(t => t.id === taskId);
-        if (taskIndex === -1) return;
-        const task = this.data.pendingTasks[taskIndex];
-        if (task.proposedBy === this.currentUser) return this.showNotification('warning', 'Action impossible', 'Vous ne pouvez pas valider votre propre proposition.');
-        
-        this.stopPolling();
-        this.data.pendingTasks.splice(taskIndex, 1);
-        task.status = 'active';
-        task.approvedAt = new Date().toISOString();
-        task.validations.push(this.currentUser);
-        this.data.tasks.push(task);
-
-        this.renderAllTasks();
-        this.updateBadges();
-        await this.saveData();
-        this.showNotification('success', 'Tâche Approuvée !', `${task.title} est maintenant active.`);
-        
-        await this.sendActionToServer(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
-        await this.syncWithServer();
-        this.startPolling();
-    }
-
-    async completeTask(taskId) {
-        const taskIndex = this.data.tasks.findIndex(t => t.id === taskId && t.status !== 'completed');
-        if (taskIndex === -1) return;
-        this.stopPolling();
-
-        const task = this.data.tasks[taskIndex];
-        task.status = 'completed';
-        task.completedBy = this.currentUser;
-        task.completedAt = new Date().toISOString();
-        
-        this.renderAllTasks();
-        this.updateBadges();
-        await this.saveData();
-        this.showNotification('success', 'Tâche Terminée !', `Vous avez terminé : ${task.title}`);
-        
-        await this.sendActionToServer(`/api/tasks/${taskId}/complete`, 'POST', { userId: this.currentUser });
-        await this.syncWithServer();
-        this.startPolling();
-    }
-
-    async rejectTask(taskId) {
-        if (!confirm('Rejeter cette tâche ?')) return;
-        this.stopPolling();
-        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-        this.renderAllTasks();
-        this.updateBadges();
-        await this.saveData();
-        
-        await this.sendActionToServer(`/api/tasks/${taskId}/reject`, 'POST', { userId: this.currentUser });
-        await this.syncWithServer();
-        this.startPolling();
-    }
-
-    async deleteTask(taskId) {
-        if (!confirm('Supprimer cette tâche définitivement ?')) return;
-        this.stopPolling();
-        this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
-        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-        this.renderAllTasks();
-        this.updateBadges();
-        await this.saveData();
-
-        await this.sendActionToServer(`/api/tasks/${taskId}`, 'DELETE', { userId: this.currentUser });
-        await this.syncWithServer();
-        this.startPolling();
-    }
-    
-    // --- Fonctions utilitaires ---
-    openTaskModal() { const modal = document.getElementById('taskModal'); if (modal) { modal.classList.add('show'); document.getElementById('taskTitle')?.focus(); } }
-    closeTaskModal() { document.getElementById('taskModal')?.classList.remove('show'); document.getElementById('taskForm')?.reset(); }
-    updateBadges() {
-        const activeCount = this.data.tasks.filter(t => t.status !== 'completed').length;
-        const pendingCount = this.data.pendingTasks.length;
-        document.getElementById('activeBadge').textContent = activeCount;
-        document.getElementById('activeBadge').style.display = activeCount > 0 ? 'flex' : 'none';
-        document.getElementById('pendingBadge').textContent = pendingCount;
-        document.getElementById('pendingBadge').style.display = pendingCount > 0 ? 'flex' : 'none';
-    }
-    formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
-    escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
-    showLoading(show) { /* ... */ }
-    updateConnectionStatus(connected) { /* ... */ }
-    showNotification(type, title, message) { /* ... */ }
 }
 
-// Initialisation
+// Démarrage de l'application
 document.addEventListener('DOMContentLoaded', () => {
-    window.taskManager = new MobileTaskManager();
+    new TaskManager();
 });
