@@ -158,11 +158,18 @@ class MobileTaskManager {
             await this.saveData();
             this.renderAllTasks();
             this.updateBadges();
-            this.updateConnectionStatus(true);
         } catch (error) {
             console.warn('⚠️ Erreur de synchronisation:', error);
-            this.updateConnectionStatus(false);
         }
+    }
+
+    switchTab(tabName) {
+        console.log(`-> Basculement vers l'onglet : '${tabName}'`);
+        document.querySelectorAll('.nav-tab, .tab-content').forEach(el => el.classList.remove('active'));
+        const tabToActivate = document.querySelector(`[data-tab="${tabName}"]`);
+        const contentToActivate = document.getElementById(`${tabName}-content`);
+        if (tabToActivate) tabToActivate.classList.add('active');
+        if (contentToActivate) contentToActivate.classList.add('active');
     }
 
     renderAllTasks() {
@@ -189,25 +196,25 @@ class MobileTaskManager {
     }
 
     createTaskCard(task, type) {
-        // ... (Le code de cette fonction est complexe mais a l'air correct)
         const isProposer = task.proposedBy === this.currentUser;
         const hasValidated = task.validations?.includes(this.currentUser);
         let actions = '', validationStatus = '';
 
         if (type === 'pending') {
             const validationCount = task.validations?.length || 0;
-            // Texte clarifié : on a besoin d'une seule validation.
             validationStatus = `<div class="validation-status"><i class="fas fa-users"></i> Validation: ${validationCount}/1 requis</div>`;
             if (!isProposer && !hasValidated) {
-                actions = `<button class="task-btn task-btn-success" data-action="validate" data-task-id="${task.id}"><i class="fas fa-check"></i> Valider</button> <button class="task-btn task-btn-danger" data-action="reject" data-task-id="${task.id}"><i class="fas fa-times"></i> Rejeter</button>`;
+                actions = `<button class="task-btn task-btn-success" data-action="validate" data-task-id="${task.id}"><i class="fas fa-check"></i> Valider</button>
+                           <button class="task-btn task-btn-danger" data-action="reject" data-task-id="${task.id}"><i class="fas fa-times"></i> Rejeter</button>`;
             } else if (hasValidated) {
                 actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-check"></i> Validée par vous</button>`;
-            } else { // isProposer
-                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-clock"></i> En attente</button> <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Annuler</button>`;
+            } else {
+                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-clock"></i> En attente</button>
+                           <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Annuler</button>`;
             }
         } else if (type === 'active') {
             actions = `<button class="task-btn task-btn-success" data-action="complete" data-task-id="${task.id}"><i class="fas fa-check"></i> Terminer</button>`;
-        } else { // completed
+        } else {
             actions = `<button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Effacer</button>`;
         }
         
@@ -231,18 +238,6 @@ class MobileTaskManager {
                 }
             });
         });
-    }
-
-    openTaskModal() {
-        const modal = document.getElementById('taskModal');
-        if (modal) {
-            modal.classList.add('show');
-            document.getElementById('taskTitle')?.focus();
-        }
-    }
-    closeTaskModal() {
-        document.getElementById('taskModal')?.classList.remove('show');
-        document.getElementById('taskForm')?.reset();
     }
     
     // ========================================================================
@@ -343,7 +338,7 @@ class MobileTaskManager {
                 console.log(`📡 Action [${method}] réussie. Le serveur mettra à jour.`);
             } else {
                 console.error('Erreur serveur en arrière-plan:', result.error);
-                this.syncWithServer(); // Forcer une re-synchronisation pour corriger
+                this.syncWithServer();
             }
         })
         .catch(error => {
@@ -352,6 +347,8 @@ class MobileTaskManager {
     }
 
     // --- Fonctions utilitaires ---
+    openTaskModal() { const modal = document.getElementById('taskModal'); if (modal) { modal.classList.add('show'); document.getElementById('taskTitle')?.focus(); } }
+    closeTaskModal() { document.getElementById('taskModal')?.classList.remove('show'); document.getElementById('taskForm')?.reset(); }
     updateBadges() {
         const activeCount = this.data.tasks.filter(t => t.status !== 'completed').length;
         const pendingCount = this.data.pendingTasks.length;
@@ -362,7 +359,7 @@ class MobileTaskManager {
     }
     formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
-    showLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
+    showLoading(show) { /* ... */ }
     updateConnectionStatus(connected) { /* ... */ }
     showNotification(type, title, message) { /* ... */ }
 }
