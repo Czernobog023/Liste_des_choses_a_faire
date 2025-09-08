@@ -1,4 +1,4 @@
-// Application Collaborative Maya & Rayanha - Version Finale Persistante
+// Application Collaborative Maya & Rayanha - Version Finale Stable
 class MobileTaskManager {
     constructor() {
         this.currentUser = localStorage.getItem('currentUser') || 'Maya l\'abeille';
@@ -8,8 +8,8 @@ class MobileTaskManager {
             tasks: [],
             pendingTasks: []
         };
-        this.lastUpdate = 0;
         this.db = null;
+        this.pollingInterval = null;
         
         this.init();
     }
@@ -20,25 +20,20 @@ class MobileTaskManager {
         return SHARED_SESSION_ID;
     }
 
-    // MODIFIÉ : Logique d'initialisation plus robuste
     async init() {
-        console.log('🚀 Initialisation Maya & Rayanha - Démarrage...');
-        
-        this.showLoading(true);
+        console.log('🚀 Initialisation...');
         this.setupEventListeners();
         
-        // 1. Charger les données locales d'abord pour un affichage instantané
+        // 1. Charger les données locales pour un affichage instantané
         await this.loadLocalData();
         this.renderAllTasks();
         this.updateBadges();
-        this.showLoading(false); // On affiche l'interface le plus vite possible
         
-        // 2. Ensuite, synchroniser avec le serveur en arrière-plan
+        // 2. Synchroniser avec le serveur en arrière-plan
         try {
             await this.syncWithServer();
             this.showNotification('success', 'Connecté', 'Application synchronisée !');
         } catch (error) {
-            console.error('❌ Erreur de synchronisation initiale:', error);
             this.showNotification('warning', 'Mode hors ligne', 'Impossible de synchroniser.');
         }
 
@@ -49,52 +44,50 @@ class MobileTaskManager {
     setupEventListeners() {
         const userSelector = document.getElementById('currentUser');
         if (userSelector) {
-            userSelector.value = this.currentUser; // S'assurer que le select est correct au démarrage
+            userSelector.value = this.currentUser;
             userSelector.addEventListener('change', (e) => {
                 this.currentUser = e.target.value;
-                localStorage.setItem('currentUser', this.currentUser); // Sauvegarder le choix
-                this.showNotification('info', 'Utilisateur changé', `Vous êtes maintenant ${this.currentUser}`);
+                localStorage.setItem('currentUser', this.currentUser);
                 this.renderAllTasks();
             });
         }
-        // ... (le reste des écouteurs est inchangé)
+        
         document.querySelectorAll('.nav-tab').forEach(tab => this.addTouchHandler(tab, () => this.switchTab(tab.dataset.tab)));
+        
         const addTaskBtn = document.getElementById('addTaskBtn');
         if (addTaskBtn) this.addTouchHandler(addTaskBtn, () => this.openTaskModal());
+
         const taskForm = document.getElementById('taskForm');
         if (taskForm) taskForm.addEventListener('submit', (e) => { e.preventDefault(); this.submitNewTask(); });
+
         const closeModal = document.getElementById('closeModal');
         if (closeModal) this.addTouchHandler(closeModal, () => this.closeTaskModal());
         const cancelTask = document.getElementById('cancelTask');
         if (cancelTask) this.addTouchHandler(cancelTask, () => this.closeTaskModal());
     }
 
-   // FONCTION addTouchHandler 
-addTouchHandler(element, handler) {
-    if (!element) return;
-
-    element.addEventListener('click', (e) => {
-        console.log("-> Clic détecté par addTouchHandler sur l'élément:", element); // AJOUT DE CET ESPION
-        e.stopPropagation(); 
-        handler(e);
-    });
-}
-
+    addTouchHandler(element, handler) {
+        if (!element) return;
+        element.addEventListener('click', (e) => {
+            e.stopPropagation(); 
+            handler(e);
+        });
+    }
 
     // --- Fonctions de persistance des données ---
     async initStorage() {
-        return new Promise((resolve, reject) => {
+        if (this.db) return; // Déjà initialisé
+        return new Promise((resolve) => {
             if (!window.indexedDB) {
                 console.warn('IndexedDB non supporté, fallback sur localStorage.');
                 return resolve();
             }
             const request = indexedDB.open('MayaRayanhaDB', 3);
-            request.onerror = (e) => { console.error('Erreur IndexedDB:', e); reject(e); };
+            request.onerror = () => resolve(); // En cas d'erreur, on utilisera localStorage
             request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
             request.onupgradeneeded = (e) => {
-                const db = e.target.result;
-                if (!db.objectStoreNames.contains('appData')) {
-                    db.createObjectStore('appData', { keyPath: 'key' });
+                if (!e.target.result.objectStoreNames.contains('appData')) {
+                    e.target.result.createObjectStore('appData', { keyPath: 'key' });
                 }
             };
         });
@@ -116,39 +109,39 @@ addTouchHandler(element, handler) {
         }
     }
 
-async loadLocalData() {
-    try {
-        await this.initStorage();
-        let loadedData;
+    async loadLocalData() {
+        try {
+            await this.initStorage();
+            let loadedData;
+            if (this.db) {
+                loadedData = await new Promise((resolve, reject) => {
+                    const transaction = this.db.transaction('appData', 'readonly');
+                    const request = transaction.objectStore('appData').get('data');
+                    transaction.oncomplete = () => resolve(request.result?.value);
+                    transaction.onerror = (event) => reject(event.target.error);
+                });
+            } else {
+                const localData = localStorage.getItem('maya_rayanha_data');
+                loadedData = localData ? JSON.parse(localData) : null;
+            }
 
-        if (this.db) {
-            // MODIFIÉ : Utilisation correcte de la transaction IndexedDB pour lire les données
-            loadedData = await new Promise((resolve, reject) => {
-                const transaction = this.db.transaction('appData', 'readonly');
-                const request = transaction.objectStore('appData').get('data');
-                transaction.oncomplete = () => resolve(request.result?.value);
-                transaction.onerror = (event) => reject(event.target.error);
-            });
-        } else {
-            // Le fallback localStorage reste inchangé
-            const localData = localStorage.getItem('maya_rayanha_data');
-            loadedData = localData ? JSON.parse(localData) : null;
+            if (loadedData) {
+                this.data.tasks = loadedData.tasks || [];
+                this.data.pendingTasks = loadedData.pendingTasks || [];
+                console.log('✅ Données locales chargées.');
+            }
+        } catch (error) {
+            console.error('❌ Erreur de chargement local:', error);
         }
-
-        if (loadedData) {
-            this.data.tasks = loadedData.tasks || [];
-            this.data.pendingTasks = loadedData.pendingTasks || [];
-            console.log('✅ Données locales chargées avec succès.');
-        }
-    } catch (error) {
-        console.error('❌ Erreur de chargement local:', error);
     }
-}
-    
     
     // --- Fonctions de synchronisation et de rendu ---
-    startPolling() { if (!this.pollingInterval) { this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); console.log('🔄 Polling démarré (toutes les 10s)'); } }
-    stopPolling() { if (this.pollingInterval) { clearInterval(this.pollingInterval); this.pollingInterval = null; console.log('⏹ Polling arrêté'); } }
+    startPolling() { 
+        if (!this.pollingInterval) { 
+            this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); 
+            console.log('🔄 Polling démarré (toutes les 10s)'); 
+        } 
+    }
 
     async syncWithServer() {
         try {
@@ -157,14 +150,12 @@ async loadLocalData() {
             
             const serverData = await response.json();
             
-            // Logique de fusion intelligente pour ne pas écraser les tâches locales temporaires
             const localTempTasks = this.data.pendingTasks.filter(t => String(t.id).startsWith('temp_'));
             
             this.data.tasks = serverData.tasks || [];
             this.data.pendingTasks = [...(serverData.pendingTasks || []), ...localTempTasks];
             
-            this.lastUpdate = serverData.timestamp || Date.now();
-            await this.saveData(); // Sauvegarder l'état fusionné
+            await this.saveData();
             this.renderAllTasks();
             this.updateBadges();
             this.updateConnectionStatus(true);
@@ -174,15 +165,88 @@ async loadLocalData() {
         }
     }
 
-    renderAllTasks() { /* ... (inchangé) ... */ }
-    renderTasks(type) { /* ... (inchangé) ... */ }
-    createTaskCard(task, type) { /* ... (inchangé, le correctif de date est déjà appliqué) ... */ }
-    bindTaskActions(container) { /* ... (inchangé) ... */ }
-    openTaskModal() { /* ... (inchangé) ... */ }
-    closeTaskModal() { /* ... (inchangé) ... */ }
+    renderAllTasks() {
+        this.renderTasks('active');
+        this.renderTasks('pending');
+        this.renderTasks('completed');
+    }
 
+    renderTasks(type) {
+        const container = document.getElementById(`${type}Tasks`);
+        const emptyState = document.getElementById(`${type}Empty`);
+        if (!container || !emptyState) return;
+
+        let tasksToRender = [];
+        if (type === 'pending') {
+            tasksToRender = this.data.pendingTasks;
+        } else {
+            tasksToRender = this.data.tasks.filter(task => (type === 'completed' ? task.status === 'completed' : task.status !== 'completed'));
+        }
+
+        emptyState.style.display = tasksToRender.length === 0 ? 'block' : 'none';
+        container.innerHTML = tasksToRender.map(task => this.createTaskCard(task, type)).join('');
+        this.bindTaskActions(container);
+    }
+
+    createTaskCard(task, type) {
+        // ... (Le code de cette fonction est complexe mais a l'air correct)
+        const isProposer = task.proposedBy === this.currentUser;
+        const hasValidated = task.validations?.includes(this.currentUser);
+        let actions = '', validationStatus = '';
+
+        if (type === 'pending') {
+            const validationCount = task.validations?.length || 0;
+            // Texte clarifié : on a besoin d'une seule validation.
+            validationStatus = `<div class="validation-status"><i class="fas fa-users"></i> Validation: ${validationCount}/1 requis</div>`;
+            if (!isProposer && !hasValidated) {
+                actions = `<button class="task-btn task-btn-success" data-action="validate" data-task-id="${task.id}"><i class="fas fa-check"></i> Valider</button> <button class="task-btn task-btn-danger" data-action="reject" data-task-id="${task.id}"><i class="fas fa-times"></i> Rejeter</button>`;
+            } else if (hasValidated) {
+                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-check"></i> Validée par vous</button>`;
+            } else { // isProposer
+                actions = `<button class="task-btn task-btn-secondary" disabled><i class="fas fa-clock"></i> En attente</button> <button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Annuler</button>`;
+            }
+        } else if (type === 'active') {
+            actions = `<button class="task-btn task-btn-success" data-action="complete" data-task-id="${task.id}"><i class="fas fa-check"></i> Terminer</button>`;
+        } else { // completed
+            actions = `<button class="task-btn task-btn-danger" data-action="delete" data-task-id="${task.id}"><i class="fas fa-trash"></i> Effacer</button>`;
+        }
+        
+        const dateInfo = type === 'pending' ? `Proposée par ${task.proposedBy || '...'} le ${this.formatDate(task.proposedAt)}`
+                       : type === 'completed' ? `Terminée par ${task.completedBy || '...'} le ${this.formatDate(task.completedAt)}`
+                       : (task.approvedAt ? `Approuvée le ${this.formatDate(task.approvedAt)}` : 'Approuvée récemment');
+        
+        return `<div class="task-card ${type}"><div class="task-header"><h3 class="task-title">${this.escapeHtml(task.title || 'Tâche...')}</h3></div>${task.description ? `<div class="task-description">${this.escapeHtml(task.description)}</div>` : ''}${validationStatus}<div class="task-meta">${dateInfo}</div><div class="task-actions">${actions}</div></div>`;
+    }
+
+    bindTaskActions(container) {
+        container.querySelectorAll('[data-action]').forEach(button => {
+            this.addTouchHandler(button, () => {
+                const action = button.dataset.action;
+                const taskId = button.dataset.taskId;
+                switch (action) {
+                    case 'validate': this.validateTask(taskId); break;
+                    case 'reject': this.rejectTask(taskId); break;
+                    case 'complete': this.completeTask(taskId); break;
+                    case 'delete': this.deleteTask(taskId); break;
+                }
+            });
+        });
+    }
+
+    openTaskModal() {
+        const modal = document.getElementById('taskModal');
+        if (modal) {
+            modal.classList.add('show');
+            document.getElementById('taskTitle')?.focus();
+        }
+    }
+    closeTaskModal() {
+        document.getElementById('taskModal')?.classList.remove('show');
+        document.getElementById('taskForm')?.reset();
+    }
+    
     // ========================================================================
-    // SECTION DES ACTIONS UTILISATEUR (AVEC SAUVEGARDE SYSTÉMATIQUE)
+    // SECTION DES ACTIONS UTILISATEUR (LOGIQUE FINALE ET STABLE)
     // ========================================================================
     
     submitNewTask() {
@@ -203,7 +267,7 @@ async loadLocalData() {
         this.data.pendingTasks.push(newTask);
         this.renderAllTasks();
         this.updateBadges();
-        this.saveData(); // MODIFIÉ : Sauvegarde immédiate
+        this.saveData();
 
         this.sendActionInBackground('/api/tasks/propose', 'POST', { tempId: newTask.id, title, description, proposedBy: this.currentUser });
     }
@@ -211,6 +275,7 @@ async loadLocalData() {
     validateTask(taskId) {
         const taskIndex = this.data.pendingTasks.findIndex(t => t.id === taskId);
         if (taskIndex === -1) return;
+
         const task = this.data.pendingTasks[taskIndex];
         if (task.proposedBy === this.currentUser) return this.showNotification('warning', 'Action impossible', 'Vous ne pouvez pas valider votre propre proposition.');
 
@@ -222,24 +287,24 @@ async loadLocalData() {
 
         this.renderAllTasks();
         this.updateBadges();
-        this.saveData(); // MODIFIÉ : Sauvegarde immédiate
+        this.saveData();
         this.showNotification('success', 'Tâche Approuvée !', `${task.title} est maintenant active.`);
         
         this.sendActionInBackground(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
     }
 
     completeTask(taskId) {
-        const taskIndex = this.data.tasks.findIndex(t => t.id === taskId);
+        const taskIndex = this.data.tasks.findIndex(t => t.id === taskId && t.status !== 'completed');
         if (taskIndex === -1) return;
-        const task = this.data.tasks[taskIndex];
 
+        const task = this.data.tasks[taskIndex];
         task.status = 'completed';
         task.completedBy = this.currentUser;
         task.completedAt = new Date().toISOString();
         
         this.renderAllTasks();
         this.updateBadges();
-        this.saveData(); // MODIFIÉ : Sauvegarde immédiate
+        this.saveData();
         this.showNotification('success', 'Tâche Terminée !', `Vous avez terminé : ${task.title}`);
         
         this.sendActionInBackground(`/api/tasks/${taskId}/complete`, 'POST', { userId: this.currentUser });
@@ -250,7 +315,7 @@ async loadLocalData() {
         this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
         this.renderAllTasks();
         this.updateBadges();
-        this.saveData(); // MODIFIÉ : Sauvegarde immédiate
+        this.saveData();
         this.showNotification('info', 'Tâche rejetée');
         this.sendActionInBackground(`/api/tasks/${taskId}/reject`, 'POST', { userId: this.currentUser });
     }
@@ -261,7 +326,7 @@ async loadLocalData() {
         this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
         this.renderAllTasks();
         this.updateBadges();
-        this.saveData(); // MODIFIÉ : Sauvegarde immédiate
+        this.saveData();
         this.showNotification('info', 'Tâche supprimée');
         this.sendActionInBackground(`/api/tasks/${taskId}`, 'DELETE', { userId: this.currentUser });
     }
@@ -275,11 +340,10 @@ async loadLocalData() {
         .then(response => response.json())
         .then(result => {
             if (result.success) {
-                console.log(`📡 Action [${method}] réussie. Synchronisation à venir.`);
-                // La synchronisation périodique mettra à jour l'état (ex: l'ID temporaire)
+                console.log(`📡 Action [${method}] réussie. Le serveur mettra à jour.`);
             } else {
                 console.error('Erreur serveur en arrière-plan:', result.error);
-                this.syncWithServer(); // Forcer une re-synchronisation pour corriger l'état en cas d'erreur
+                this.syncWithServer(); // Forcer une re-synchronisation pour corriger
             }
         })
         .catch(error => {
@@ -288,24 +352,18 @@ async loadLocalData() {
     }
 
     // --- Fonctions utilitaires ---
+    updateBadges() {
+        const activeCount = this.data.tasks.filter(t => t.status !== 'completed').length;
+        const pendingCount = this.data.pendingTasks.length;
+        document.getElementById('activeBadge').textContent = activeCount;
+        document.getElementById('activeBadge').style.display = activeCount > 0 ? 'flex' : 'none';
+        document.getElementById('pendingBadge').textContent = pendingCount;
+        document.getElementById('pendingBadge').style.display = pendingCount > 0 ? 'flex' : 'none';
+    }
+    formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
+    escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
     showLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
     updateConnectionStatus(connected) { /* ... */ }
-    updateBadges() {
-        const activeBadge = document.getElementById('activeBadge');
-        const pendingBadge = document.getElementById('pendingBadge');
-        if (activeBadge) {
-            const activeCount = this.data.tasks.filter(t => t.status !== 'completed').length;
-            activeBadge.textContent = activeCount;
-            activeBadge.style.display = activeCount > 0 ? 'flex' : 'none';
-        }
-        if (pendingBadge) {
-            const pendingCount = this.data.pendingTasks.length;
-            pendingBadge.textContent = pendingCount;
-            pendingBadge.style.display = pendingCount > 0 ? 'flex' : 'none';
-        }
-    }
-    formatDate(dateString) { if (!dateString) return ''; const date = new Date(dateString); return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
-    escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
     showNotification(type, title, message) { /* ... */ }
 }
 
