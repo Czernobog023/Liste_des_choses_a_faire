@@ -2,6 +2,7 @@
 class MobileTaskManager {
     constructor() {
         this.currentUser = 'Maya l\'abeille';
+        this.sessionId = this.generateSessionId();
         this.data = {
             users: ['Maya l\'abeille', 'Rayanha'],
             tasks: [],
@@ -10,24 +11,37 @@ class MobileTaskManager {
         this.lastUpdate = 0;
         this.isLoading = false;
         this.pollingInterval = null;
+        this.syncInterval = null;
         
         this.init();
+    }
+    
+    // Générer un ID de session unique
+    generateSessionId() {
+        return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
     }
 
     // Initialisation de l'application
     async init() {
-        console.log('🚀 Initialisation Maya & Rayanha v2.0');
+        console.log('🚀 Initialisation Maya & Rayanha v2.1 - Session:', this.sessionId);
         
         this.showLoading(true);
         this.setupEventListeners();
         
         try {
+            // Charger les données locales d'abord
+            this.loadLocalData();
             await this.loadData();
             this.startPolling();
+            this.startAutoSync();
             this.showNotification('success', 'Connecté', 'Application prête !');
         } catch (error) {
             console.error('❌ Erreur initialisation:', error);
-            this.showNotification('error', 'Erreur', 'Impossible de charger l\'application');
+            this.showNotification('error', 'Erreur', 'Mode hors ligne activé');
+            // Continuer avec les données locales
+            this.loadLocalData();
+            this.renderAllTasks();
+            this.updateBadges();
         } finally {
             this.showLoading(false);
         }
@@ -121,10 +135,17 @@ class MobileTaskManager {
         document.addEventListener('visibilitychange', () => {
             if (document.hidden) {
                 this.stopPolling();
+                this.stopAutoSync();
             } else {
                 this.startPolling();
+                this.startAutoSync();
                 this.checkForUpdates();
             }
+        });
+        
+        // Sauvegarder avant de quitter
+        window.addEventListener('beforeunload', () => {
+            this.saveLocalData();
         });
     }
 
@@ -174,13 +195,106 @@ class MobileTaskManager {
         });
     }
 
+    // Sauvegarder les données localement
+    saveLocalData() {
+        try {
+            const dataToSave = {
+                ...this.data,
+                sessionId: this.sessionId,
+                savedAt: Date.now()
+            };
+            localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
+            console.log('💾 Données sauvegardées localement');
+        } catch (error) {
+            console.error('❌ Erreur sauvegarde locale:', error);
+        }
+    }
+
+    // Charger les données locales
+    loadLocalData() {
+        try {
+            const savedData = localStorage.getItem('maya_rayanha_data');
+            if (savedData) {
+                const parsed = JSON.parse(savedData);
+                // Ne charger que si les données sont récentes (< 24h)
+                if (Date.now() - parsed.savedAt < 24 * 60 * 60 * 1000) {
+                    this.data = {
+                        users: parsed.users || this.data.users,
+                        tasks: parsed.tasks || [],
+                        pendingTasks: parsed.pendingTasks || []
+                    };
+                    console.log('📱 Données locales chargées');
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erreur chargement local:', error);
+        }
+    }
+
+    // Démarrer la synchronisation automatique
+    startAutoSync() {
+        if (this.syncInterval) return;
+        
+        this.syncInterval = setInterval(() => {
+            this.syncWithServer();
+        }, 5000); // Synchroniser toutes les 5 secondes
+        
+        console.log('🔄 Auto-sync démarré');
+    }
+
+    // Arrêter la synchronisation
+    stopAutoSync() {
+        if (this.syncInterval) {
+            clearInterval(this.syncInterval);
+            this.syncInterval = null;
+            console.log('⏹ Auto-sync arrêté');
+        }
+    }
+
+    // Synchroniser avec le serveur
+    async syncWithServer() {
+        if (this.isLoading) return;
+        
+        try {
+            const response = await fetch('/api/sync', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    sessionId: this.sessionId,
+                    clientData: this.data
+                })
+            });
+            
+            if (response.ok) {
+                const result = await response.json();
+                if (result.success && result.mergedData) {
+                    // Mettre à jour avec les données mergées
+                    const hasChanges = JSON.stringify(this.data) !== JSON.stringify(result.mergedData);
+                    
+                    if (hasChanges) {
+                        this.data = result.mergedData;
+                        this.lastUpdate = result.mergedData.timestamp;
+                        this.renderAllTasks();
+                        this.updateBadges();
+                        this.saveLocalData();
+                        console.log('📡 Données synchronisées');
+                    }
+                }
+                this.updateConnectionStatus(true);
+            }
+        } catch (error) {
+            console.error('❌ Erreur synchronisation:', error);
+            this.updateConnectionStatus(false);
+        }
+    }
+
     // Démarrer le polling pour les mises à jour (remplace Socket.IO)
     startPolling() {
         if (this.pollingInterval) return;
         
         this.pollingInterval = setInterval(() => {
             this.checkForUpdates();
-        }, 3000); // Vérifier toutes les 3 secondes
+        }, 4000); // Vérifier toutes les 4 secondes (différent de sync)
         
         console.log('🔄 Polling démarré');
     }
@@ -199,16 +313,17 @@ class MobileTaskManager {
         if (this.isLoading) return;
         
         try {
-            const response = await fetch(`/api/poll/${this.lastUpdate}`);
+            const response = await fetch(`/api/poll/${this.sessionId}/${this.lastUpdate}`);
             if (response.ok) {
                 const result = await response.json();
                 
                 if (result.updated) {
-                    console.log('📱 Nouvelles données reçues');
+                    console.log('📱 Nouvelles données reçues via polling');
                     this.data = result.data;
                     this.lastUpdate = result.timestamp;
                     this.renderAllTasks();
                     this.updateBadges();
+                    this.saveLocalData();
                     this.updateConnectionStatus(true);
                 }
             }
@@ -485,7 +600,8 @@ class MobileTaskManager {
                 body: JSON.stringify({
                     title,
                     description,
-                    proposedBy: this.currentUser
+                    proposedBy: this.currentUser,
+                    sessionId: this.sessionId
                 })
             });
 
@@ -495,8 +611,15 @@ class MobileTaskManager {
                 this.closeTaskModal();
                 this.showNotification('success', 'Tâche proposée', result.message);
                 this.vibrate();
-                // Recharger immédiatement les données
-                await this.loadData();
+                
+                // Ajouter la tâche localement immédiatement pour un feedback rapide
+                this.data.pendingTasks.push(result.task);
+                this.renderAllTasks();
+                this.updateBadges();
+                this.saveLocalData();
+                
+                // Synchroniser avec le serveur
+                await this.syncWithServer();
             } else {
                 this.showNotification('error', 'Erreur', result.error || 'Erreur lors de la proposition');
             }
@@ -530,11 +653,14 @@ class MobileTaskManager {
     async performTaskAction(url, method, body) {
         this.showLoading(true);
         
+        // Ajouter sessionId au body
+        const bodyWithSession = { ...body, sessionId: this.sessionId };
+        
         try {
             const response = await fetch(url, {
                 method,
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(bodyWithSession)
             });
 
             const result = await response.json();
@@ -542,14 +668,17 @@ class MobileTaskManager {
             if (response.ok && result.success) {
                 this.showNotification('success', 'Action réussie', result.message);
                 this.vibrate();
-                // Recharger immédiatement les données
-                await this.loadData();
+                
+                // Synchroniser avec le serveur pour obtenir les dernières données
+                await this.syncWithServer();
             } else {
                 this.showNotification('error', 'Erreur', result.error || 'Erreur lors de l\'action');
             }
         } catch (error) {
             console.error('❌ Erreur action:', error);
-            this.showNotification('error', 'Erreur', 'Erreur de connexion');
+            this.showNotification('error', 'Erreur', 'Erreur de connexion - Action sauvegardée localement');
+            // En cas d'erreur, sauvegarder l'action localement pour retry plus tard
+            this.saveLocalData();
         } finally {
             this.showLoading(false);
         }
@@ -590,7 +719,10 @@ class MobileTaskManager {
             const response = await fetch('/api/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(data)
+                body: JSON.stringify({
+                    importedData: data,
+                    sessionId: this.sessionId
+                })
             });
 
             const result = await response.json();
@@ -598,7 +730,7 @@ class MobileTaskManager {
             if (response.ok && result.success) {
                 this.showNotification('success', 'Import réussi', result.message);
                 this.vibrate();
-                await this.loadData();
+                await this.syncWithServer();
             } else {
                 this.showNotification('error', 'Erreur d\'import', result.error || 'Format invalide');
             }
@@ -734,7 +866,7 @@ class MobileTaskManager {
 
 // Initialisation de l'application quand le DOM est prêt
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Initialisation Maya & Rayanha v2.0 - Vercel Edition');
+    console.log('🚀 Initialisation Maya & Rayanha v2.1 - Edition Persistante');
     window.taskManager = new MobileTaskManager();
 });
 

@@ -13,50 +13,209 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Stockage en mémoire pour Vercel (simple pour démo)
-let appData = {
+// Stockage temporaire en mémoire (sera remplacé par le stockage client)
+let memoryData = {
   users: ['Maya l\'abeille', 'Rayanha'],
   tasks: [],
   pendingTasks: [],
-  lastUpdate: Date.now()
+  lastUpdate: Date.now(),
+  sessions: new Map() // Pour suivre les sessions actives
 };
+
+// Fonction pour nettoyer les sessions inactives (> 30 min)
+function cleanupSessions() {
+  const now = Date.now();
+  const thirtyMinutes = 30 * 60 * 1000;
+  
+  for (const [sessionId, session] of memoryData.sessions.entries()) {
+    if (now - session.lastActivity > thirtyMinutes) {
+      memoryData.sessions.delete(sessionId);
+    }
+  }
+}
 
 // Fonction pour notifier un changement
 function updateData() {
-  appData.lastUpdate = Date.now();
+  memoryData.lastUpdate = Date.now();
+  cleanupSessions();
 }
 
 // Routes API
 
-// Obtenir toutes les données avec timestamp
+// Obtenir les données avec merge intelligent des sessions actives
 app.get('/api/data', (req, res) => {
   try {
-    res.json({
-      ...appData,
-      timestamp: appData.lastUpdate
-    });
+    // Nettoyer les sessions expirées
+    cleanupSessions();
+    
+    // Merger les données de toutes les sessions actives
+    let mergedTasks = [...memoryData.tasks];
+    let mergedPendingTasks = [...memoryData.pendingTasks];
+    
+    // Ajouter les données des sessions actives
+    for (const session of memoryData.sessions.values()) {
+      if (session.data) {
+        // Merger sans doublons basés sur l'ID
+        session.data.tasks?.forEach(task => {
+          if (!mergedTasks.find(t => t.id === task.id)) {
+            mergedTasks.push(task);
+          }
+        });
+        
+        session.data.pendingTasks?.forEach(task => {
+          if (!mergedPendingTasks.find(t => t.id === task.id)) {
+            mergedPendingTasks.push(task);
+          }
+        });
+      }
+    }
+    
+    const responseData = {
+      users: memoryData.users,
+      tasks: mergedTasks,
+      pendingTasks: mergedPendingTasks,
+      timestamp: memoryData.lastUpdate,
+      activeSessions: memoryData.sessions.size
+    };
+    
+    res.json(responseData);
   } catch (error) {
     console.error('Erreur lecture données:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des données' });
   }
 });
 
-// Polling pour les mises à jour (remplace Socket.IO)
-app.get('/api/poll/:lastUpdate', (req, res) => {
+// Synchronisation des données client (nouveau endpoint)
+app.post('/api/sync', (req, res) => {
   try {
-    const clientLastUpdate = parseInt(req.params.lastUpdate);
+    const { sessionId, clientData } = req.body;
     
-    // Si les données ont été mises à jour depuis la dernière fois
-    if (appData.lastUpdate > clientLastUpdate) {
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID requis' });
+    }
+    
+    // Créer ou mettre à jour la session
+    memoryData.sessions.set(sessionId, {
+      id: sessionId,
+      lastActivity: Date.now(),
+      data: clientData
+    });
+    
+    // Nettoyer les sessions expirées
+    cleanupSessions();
+    
+    // Merger toutes les données actives
+    let allTasks = [...memoryData.tasks];
+    let allPendingTasks = [...memoryData.pendingTasks];
+    
+    for (const session of memoryData.sessions.values()) {
+      if (session.data && session.id !== sessionId) {
+        session.data.tasks?.forEach(task => {
+          if (!allTasks.find(t => t.id === task.id)) {
+            allTasks.push(task);
+          }
+        });
+        
+        session.data.pendingTasks?.forEach(task => {
+          if (!allPendingTasks.find(t => t.id === task.id)) {
+            allPendingTasks.push(task);
+          }
+        });
+      }
+    }
+    
+    // Ajouter les nouvelles données du client
+    clientData.tasks?.forEach(task => {
+      if (!allTasks.find(t => t.id === task.id)) {
+        allTasks.push(task);
+      }
+    });
+    
+    clientData.pendingTasks?.forEach(task => {
+      if (!allPendingTasks.find(t => t.id === task.id)) {
+        allPendingTasks.push(task);
+      }
+    });
+    
+    updateData();
+    
+    res.json({
+      success: true,
+      mergedData: {
+        users: memoryData.users,
+        tasks: allTasks,
+        pendingTasks: allPendingTasks,
+        timestamp: memoryData.lastUpdate
+      },
+      activeSessions: memoryData.sessions.size
+    });
+  } catch (error) {
+    console.error('Erreur synchronisation:', error);
+    res.status(500).json({ error: 'Erreur lors de la synchronisation' });
+  }
+});
+
+// Polling avec données des sessions actives
+app.get('/api/poll/:sessionId/:lastUpdate', (req, res) => {
+  try {
+    const { sessionId, lastUpdate } = req.params;
+    const clientLastUpdate = parseInt(lastUpdate);
+    
+    // Mettre à jour l'activité de la session
+    const session = memoryData.sessions.get(sessionId);
+    if (session) {
+      session.lastActivity = Date.now();
+    }
+    
+    cleanupSessions();
+    
+    // Vérifier s'il y a des mises à jour depuis d'autres sessions
+    let hasUpdates = memoryData.lastUpdate > clientLastUpdate;
+    
+    // Vérifier les mises à jour des autres sessions
+    for (const otherSession of memoryData.sessions.values()) {
+      if (otherSession.id !== sessionId && otherSession.lastActivity > clientLastUpdate) {
+        hasUpdates = true;
+        break;
+      }
+    }
+    
+    if (hasUpdates) {
+      // Merger les données de toutes les sessions
+      let mergedTasks = [];
+      let mergedPendingTasks = [];
+      
+      for (const sessionData of memoryData.sessions.values()) {
+        if (sessionData.data) {
+          sessionData.data.tasks?.forEach(task => {
+            if (!mergedTasks.find(t => t.id === task.id)) {
+              mergedTasks.push(task);
+            }
+          });
+          
+          sessionData.data.pendingTasks?.forEach(task => {
+            if (!mergedPendingTasks.find(t => t.id === task.id)) {
+              mergedPendingTasks.push(task);
+            }
+          });
+        }
+      }
+      
       res.json({
         updated: true,
-        data: appData,
-        timestamp: appData.lastUpdate
+        data: {
+          users: memoryData.users,
+          tasks: mergedTasks,
+          pendingTasks: mergedPendingTasks
+        },
+        timestamp: memoryData.lastUpdate,
+        activeSessions: memoryData.sessions.size
       });
     } else {
       res.json({
         updated: false,
-        timestamp: appData.lastUpdate
+        timestamp: memoryData.lastUpdate,
+        activeSessions: memoryData.sessions.size
       });
     }
   } catch (error) {
@@ -65,13 +224,13 @@ app.get('/api/poll/:lastUpdate', (req, res) => {
   }
 });
 
-// Ajouter une nouvelle tâche (en attente de validation)
+// Les autres routes restent similaires mais utilisent maintenant les sessions
 app.post('/api/tasks/propose', (req, res) => {
   try {
-    const { title, description, proposedBy } = req.body;
+    const { title, description, proposedBy, sessionId } = req.body;
     
-    if (!title || !proposedBy) {
-      return res.status(400).json({ error: 'Titre et utilisateur proposant requis' });
+    if (!title || !proposedBy || !sessionId) {
+      return res.status(400).json({ error: 'Titre, utilisateur et session requis' });
     }
 
     const newTask = {
@@ -80,11 +239,29 @@ app.post('/api/tasks/propose', (req, res) => {
       description: description?.trim() || '',
       proposedBy,
       proposedAt: new Date().toISOString(),
-      validations: [proposedBy], // L'utilisateur qui propose valide automatiquement
-      status: 'pending'
+      validations: [proposedBy],
+      status: 'pending',
+      sessionId // Tracer quelle session a créé la tâche
     };
 
-    appData.pendingTasks.push(newTask);
+    // Ajouter à la session du client
+    let session = memoryData.sessions.get(sessionId);
+    if (!session) {
+      session = {
+        id: sessionId,
+        lastActivity: Date.now(),
+        data: { tasks: [], pendingTasks: [] }
+      };
+      memoryData.sessions.set(sessionId, session);
+    }
+    
+    if (!session.data.pendingTasks) {
+      session.data.pendingTasks = [];
+    }
+    
+    session.data.pendingTasks.push(newTask);
+    session.lastActivity = Date.now();
+    
     updateData();
     
     res.json({
@@ -102,36 +279,52 @@ app.post('/api/tasks/propose', (req, res) => {
 app.post('/api/tasks/:taskId/validate', (req, res) => {
   try {
     const { taskId } = req.params;
-    const { userId } = req.body;
+    const { userId, sessionId } = req.body;
     
-    if (!userId) {
-      return res.status(400).json({ error: 'ID utilisateur requis' });
+    if (!userId || !sessionId) {
+      return res.status(400).json({ error: 'Utilisateur et session requis' });
     }
 
-    const taskIndex = appData.pendingTasks.findIndex(task => task.id === taskId);
+    // Chercher la tâche dans toutes les sessions
+    let foundTask = null;
+    let foundSession = null;
     
-    if (taskIndex === -1) {
+    for (const session of memoryData.sessions.values()) {
+      if (session.data?.pendingTasks) {
+        const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
+        if (taskIndex !== -1) {
+          foundTask = session.data.pendingTasks[taskIndex];
+          foundSession = session;
+          break;
+        }
+      }
+    }
+    
+    if (!foundTask) {
       return res.status(404).json({ error: 'Tâche non trouvée' });
     }
-
-    const task = appData.pendingTasks[taskIndex];
     
     // Ajouter la validation si pas déjà validée par cet utilisateur
-    if (!task.validations.includes(userId)) {
-      task.validations.push(userId);
+    if (!foundTask.validations.includes(userId)) {
+      foundTask.validations.push(userId);
     }
     
     // Si les deux utilisateurs ont validé, déplacer vers les tâches actives
-    if (task.validations.length >= 2) {
+    if (foundTask.validations.length >= 2) {
       const approvedTask = {
-        ...task,
+        ...foundTask,
         status: 'active',
         approvedAt: new Date().toISOString()
       };
       delete approvedTask.validations;
       
-      appData.tasks.push(approvedTask);
-      appData.pendingTasks.splice(taskIndex, 1);
+      // Supprimer de pendingTasks et ajouter à tasks
+      foundSession.data.pendingTasks = foundSession.data.pendingTasks.filter(t => t.id !== taskId);
+      if (!foundSession.data.tasks) {
+        foundSession.data.tasks = [];
+      }
+      foundSession.data.tasks.push(approvedTask);
+      
       updateData();
       
       res.json({ 
@@ -146,7 +339,7 @@ app.post('/api/tasks/:taskId/validate', (req, res) => {
       res.json({ 
         success: true,
         message: 'Validation ajoutée', 
-        task,
+        task: foundTask,
         action: 'validated'
       });
     }
@@ -162,14 +355,23 @@ app.post('/api/tasks/:taskId/reject', (req, res) => {
     const { taskId } = req.params;
     const { userId } = req.body;
     
-    const taskIndex = appData.pendingTasks.findIndex(task => task.id === taskId);
+    // Chercher et supprimer la tâche de toutes les sessions
+    let rejectedTask = null;
     
-    if (taskIndex === -1) {
+    for (const session of memoryData.sessions.values()) {
+      if (session.data?.pendingTasks) {
+        const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
+        if (taskIndex !== -1) {
+          rejectedTask = session.data.pendingTasks.splice(taskIndex, 1)[0];
+          break;
+        }
+      }
+    }
+    
+    if (!rejectedTask) {
       return res.status(404).json({ error: 'Tâche non trouvée' });
     }
-
-    const rejectedTask = appData.pendingTasks[taskIndex];
-    appData.pendingTasks.splice(taskIndex, 1);
+    
     updateData();
     
     res.json({ 
@@ -190,21 +392,33 @@ app.post('/api/tasks/:taskId/complete', (req, res) => {
     const { taskId } = req.params;
     const { userId } = req.body;
     
-    const task = appData.tasks.find(task => task.id === taskId);
+    // Chercher la tâche dans toutes les sessions
+    let foundTask = null;
     
-    if (!task) {
+    for (const session of memoryData.sessions.values()) {
+      if (session.data?.tasks) {
+        const task = session.data.tasks.find(task => task.id === taskId);
+        if (task) {
+          foundTask = task;
+          break;
+        }
+      }
+    }
+    
+    if (!foundTask) {
       return res.status(404).json({ error: 'Tâche non trouvée' });
     }
 
-    task.status = 'completed';
-    task.completedBy = userId;
-    task.completedAt = new Date().toISOString();
+    foundTask.status = 'completed';
+    foundTask.completedBy = userId;
+    foundTask.completedAt = new Date().toISOString();
+    
     updateData();
     
     res.json({
       success: true,
       message: 'Tâche terminée',
-      task,
+      task: foundTask,
       action: 'completed'
     });
   } catch (error) {
@@ -219,23 +433,34 @@ app.delete('/api/tasks/:taskId', (req, res) => {
     const { taskId } = req.params;
     const { userId } = req.body;
     
-    // Chercher dans les tâches actives
-    let taskIndex = appData.tasks.findIndex(task => task.id === taskId);
-    let taskType = 'active';
+    let deletedTask = null;
     
-    // Si pas trouvée, chercher dans les tâches en attente
-    if (taskIndex === -1) {
-      taskIndex = appData.pendingTasks.findIndex(task => task.id === taskId);
-      taskType = 'pending';
+    // Chercher dans toutes les sessions
+    for (const session of memoryData.sessions.values()) {
+      if (session.data) {
+        // Chercher dans les tâches actives
+        if (session.data.tasks) {
+          const taskIndex = session.data.tasks.findIndex(task => task.id === taskId);
+          if (taskIndex !== -1) {
+            deletedTask = session.data.tasks.splice(taskIndex, 1)[0];
+            break;
+          }
+        }
+        
+        // Chercher dans les tâches en attente
+        if (!deletedTask && session.data.pendingTasks) {
+          const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
+          if (taskIndex !== -1) {
+            deletedTask = session.data.pendingTasks.splice(taskIndex, 1)[0];
+            break;
+          }
+        }
+      }
     }
     
-    if (taskIndex === -1) {
+    if (!deletedTask) {
       return res.status(404).json({ error: 'Tâche non trouvée' });
     }
-
-    const deletedTask = taskType === 'active' 
-      ? appData.tasks.splice(taskIndex, 1)[0]
-      : appData.pendingTasks.splice(taskIndex, 1)[0];
     
     updateData();
     
@@ -251,13 +476,37 @@ app.delete('/api/tasks/:taskId', (req, res) => {
   }
 });
 
-// Exporter les données
+// Exporter toutes les données mergées
 app.get('/api/export', (req, res) => {
   try {
+    cleanupSessions();
+    
+    // Merger toutes les données
+    let allTasks = [];
+    let allPendingTasks = [];
+    
+    for (const session of memoryData.sessions.values()) {
+      if (session.data) {
+        session.data.tasks?.forEach(task => {
+          if (!allTasks.find(t => t.id === task.id)) {
+            allTasks.push(task);
+          }
+        });
+        
+        session.data.pendingTasks?.forEach(task => {
+          if (!allPendingTasks.find(t => t.id === task.id)) {
+            allPendingTasks.push(task);
+          }
+        });
+      }
+    }
+    
     const exportData = {
-      ...appData,
+      users: memoryData.users,
+      tasks: allTasks,
+      pendingTasks: allPendingTasks,
       exportedAt: new Date().toISOString(),
-      version: '2.0'
+      version: '2.1'
     };
     
     res.setHeader('Content-Type', 'application/json');
@@ -272,38 +521,51 @@ app.get('/api/export', (req, res) => {
 // Importer des données
 app.post('/api/import', (req, res) => {
   try {
-    const importedData = req.body;
+    const { importedData, sessionId } = req.body;
+    
+    if (!sessionId) {
+      return res.status(400).json({ error: 'Session ID requis' });
+    }
     
     // Validation basique des données importées
     if (!importedData.tasks && !importedData.pendingTasks) {
       return res.status(400).json({ error: 'Format de données invalide' });
     }
 
-    // Fusionner les données (éviter les doublons par ID)
+    // Créer ou récupérer la session
+    let session = memoryData.sessions.get(sessionId);
+    if (!session) {
+      session = {
+        id: sessionId,
+        lastActivity: Date.now(),
+        data: { tasks: [], pendingTasks: [] }
+      };
+      memoryData.sessions.set(sessionId, session);
+    }
+    
+    // Ajouter les données importées à la session
     if (importedData.tasks) {
       importedData.tasks.forEach(task => {
-        const exists = appData.tasks.find(t => t.id === task.id);
-        if (!exists) {
-          appData.tasks.push(task);
+        if (!session.data.tasks.find(t => t.id === task.id)) {
+          session.data.tasks.push(task);
         }
       });
     }
 
     if (importedData.pendingTasks) {
       importedData.pendingTasks.forEach(task => {
-        const exists = appData.pendingTasks.find(t => t.id === task.id);
-        if (!exists) {
-          appData.pendingTasks.push(task);
+        if (!session.data.pendingTasks.find(t => t.id === task.id)) {
+          session.data.pendingTasks.push(task);
         }
       });
     }
     
+    session.lastActivity = Date.now();
     updateData();
     
     res.json({ 
       success: true,
-      message: 'Import réussi', 
-      data: appData,
+      message: 'Import réussi',
       action: 'imported'
     });
   } catch (error) {
@@ -312,15 +574,16 @@ app.post('/api/import', (req, res) => {
   }
 });
 
-// Route de santé pour vérification
+// Route de santé
 app.get('/api/health', (req, res) => {
+  cleanupSessions();
+  
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    users: appData.users,
-    tasksCount: appData.tasks.length,
-    pendingCount: appData.pendingTasks.length,
-    lastUpdate: appData.lastUpdate,
+    users: memoryData.users,
+    activeSessions: memoryData.sessions.size,
+    lastUpdate: memoryData.lastUpdate,
     serverTime: Date.now()
   });
 });
@@ -329,7 +592,8 @@ app.get('/api/health', (req, res) => {
 app.get('/api/ping', (req, res) => {
   res.json({ 
     pong: true, 
-    timestamp: Date.now() 
+    timestamp: Date.now(),
+    sessions: memoryData.sessions.size
   });
 });
 
@@ -337,7 +601,6 @@ app.get('/api/ping', (req, res) => {
 if (process.env.NODE_ENV !== 'production') {
   app.use('/', express.static(path.join(__dirname, '../public')));
   
-  // Route catch-all pour SPA en local
   app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, '../public/index.html'));
   });
@@ -352,11 +615,11 @@ app.use((error, req, res, next) => {
 // Export pour Vercel
 module.exports = app;
 
-// Démarrage local si pas sur Vercel
+// Démarrage local
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Serveur Maya & Rayanha démarré sur le port ${PORT}`);
+    console.log(`🚀 Serveur Maya & Rayanha v2.1 démarré sur le port ${PORT}`);
     console.log(`📱 Interface mobile: http://localhost:${PORT}`);
   });
 }
