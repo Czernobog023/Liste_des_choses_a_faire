@@ -1,26 +1,36 @@
-// Application Collaborative Maya & Rayanha - Version Mobile Optimisée
+// Application Collaborative Maya & Rayanha - Version Vercel Optimisée
 class MobileTaskManager {
     constructor() {
         this.currentUser = 'Maya l\'abeille';
-        this.socket = null;
         this.data = {
             users: ['Maya l\'abeille', 'Rayanha'],
             tasks: [],
             pendingTasks: []
         };
+        this.lastUpdate = 0;
         this.isLoading = false;
+        this.pollingInterval = null;
         
         this.init();
     }
 
     // Initialisation de l'application
-    init() {
+    async init() {
+        console.log('🚀 Initialisation Maya & Rayanha v2.0');
+        
         this.showLoading(true);
         this.setupEventListeners();
-        this.initSocket();
-        this.loadData().finally(() => {
+        
+        try {
+            await this.loadData();
+            this.startPolling();
+            this.showNotification('success', 'Connecté', 'Application prête !');
+        } catch (error) {
+            console.error('❌ Erreur initialisation:', error);
+            this.showNotification('error', 'Erreur', 'Impossible de charger l\'application');
+        } finally {
             this.showLoading(false);
-        });
+        }
     }
 
     // Configuration des écouteurs d'événements optimisés pour mobile
@@ -31,10 +41,11 @@ class MobileTaskManager {
             userSelector.addEventListener('change', (e) => {
                 this.currentUser = e.target.value;
                 this.showNotification('info', 'Utilisateur changé', `Vous êtes maintenant ${this.currentUser}`);
+                this.renderAllTasks(); // Re-render pour mettre à jour les actions disponibles
             });
         }
 
-        // Navigation par onglets - optimisée touch
+        // Navigation par onglets
         document.querySelectorAll('.nav-tab').forEach(tab => {
             this.addTouchHandler(tab, () => {
                 const targetTab = tab.dataset.tab;
@@ -105,6 +116,16 @@ class MobileTaskManager {
 
         // Gestion du clavier virtuel sur mobile
         this.handleVirtualKeyboard();
+        
+        // Gestion de la visibilité pour économiser la batterie
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                this.stopPolling();
+            } else {
+                this.startPolling();
+                this.checkForUpdates();
+            }
+        });
     }
 
     // Ajouter un gestionnaire d'événement touch-friendly
@@ -143,15 +164,6 @@ class MobileTaskManager {
 
     // Gestion du clavier virtuel mobile
     handleVirtualKeyboard() {
-        let viewport = window.visualViewport;
-        
-        if (viewport) {
-            viewport.addEventListener('resize', () => {
-                document.documentElement.style.setProperty('--viewport-height', `${viewport.height}px`);
-            });
-        }
-        
-        // Fallback pour navigateurs sans visualViewport
         const inputs = document.querySelectorAll('input, textarea');
         inputs.forEach(input => {
             input.addEventListener('focus', () => {
@@ -162,95 +174,68 @@ class MobileTaskManager {
         });
     }
 
-    // Initialisation Socket.IO
-    initSocket() {
-        this.socket = io({
-            transports: ['websocket', 'polling']
-        });
+    // Démarrer le polling pour les mises à jour (remplace Socket.IO)
+    startPolling() {
+        if (this.pollingInterval) return;
         
-        this.socket.on('connect', () => {
-            console.log('🔌 Connecté au serveur');
-            this.updateConnectionStatus(true);
-        });
+        this.pollingInterval = setInterval(() => {
+            this.checkForUpdates();
+        }, 3000); // Vérifier toutes les 3 secondes
         
-        this.socket.on('disconnect', () => {
-            console.log('❌ Déconnecté du serveur');
-            this.updateConnectionStatus(false);
-        });
-        
-        // Événements de tâches avec feedback mobile
-        this.socket.on('taskProposed', (task) => {
-            console.log('📨 Nouvelle tâche proposée:', task);
-            this.data.pendingTasks.push(task);
-            this.renderAllTasks();
-            this.updateBadges();
-            this.showNotification('success', 'Nouvelle tâche', `${task.proposedBy} a proposé: "${task.title}"`);
-            this.vibrate();
-        });
-        
-        this.socket.on('taskValidated', ({ taskId, userId, validations }) => {
-            console.log('✅ Tâche validée:', { taskId, userId });
-            const task = this.data.pendingTasks.find(t => t.id === taskId);
-            if (task) {
-                task.validations = validations;
-                this.renderAllTasks();
-                this.showNotification('info', 'Validation', `${userId} a validé une tâche`);
-            }
-        });
-        
-        this.socket.on('taskApproved', (task) => {
-            console.log('🎉 Tâche approuvée:', task);
-            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== task.id);
-            this.data.tasks.push(task);
-            this.renderAllTasks();
-            this.updateBadges();
-            this.showNotification('success', 'Tâche active', `"${task.title}" est maintenant active !`);
-            this.vibrate();
-        });
-        
-        this.socket.on('taskRejected', ({ taskId, rejectedBy }) => {
-            console.log('❌ Tâche rejetée:', { taskId, rejectedBy });
-            const task = this.data.pendingTasks.find(t => t.id === taskId);
-            if (task) {
-                this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-                this.renderAllTasks();
-                this.updateBadges();
-                this.showNotification('warning', 'Tâche rejetée', `${rejectedBy} a rejeté "${task.title}"`);
-            }
-        });
-        
-        this.socket.on('taskCompleted', (task) => {
-            console.log('🏆 Tâche terminée:', task);
-            const activeTask = this.data.tasks.find(t => t.id === task.id);
-            if (activeTask) {
-                Object.assign(activeTask, task);
-                this.renderAllTasks();
-                this.updateBadges();
-                this.showNotification('success', 'Terminé', `"${task.title}" a été accomplie !`);
-                this.vibrate([100, 50, 100]);
-            }
-        });
-        
-        this.socket.on('taskDeleted', ({ taskId, deletedBy }) => {
-            console.log('🗑 Tâche supprimée:', { taskId, deletedBy });
-            this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
-            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-            this.renderAllTasks();
-            this.updateBadges();
-            this.showNotification('info', 'Suppression', `${deletedBy} a supprimé une tâche`);
-        });
-        
-        this.socket.on('dataImported', () => {
-            console.log('📥 Données importées');
-            this.loadData();
-            this.showNotification('success', 'Import réussi', 'Nouvelles données chargées');
-        });
+        console.log('🔄 Polling démarré');
     }
 
-    // Vibration pour les appareils mobiles
-    vibrate(pattern = 200) {
-        if ('vibrate' in navigator) {
-            navigator.vibrate(pattern);
+    // Arrêter le polling
+    stopPolling() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+            console.log('⏹ Polling arrêté');
+        }
+    }
+
+    // Vérifier les mises à jour depuis le serveur
+    async checkForUpdates() {
+        if (this.isLoading) return;
+        
+        try {
+            const response = await fetch(`/api/poll/${this.lastUpdate}`);
+            if (response.ok) {
+                const result = await response.json();
+                
+                if (result.updated) {
+                    console.log('📱 Nouvelles données reçues');
+                    this.data = result.data;
+                    this.lastUpdate = result.timestamp;
+                    this.renderAllTasks();
+                    this.updateBadges();
+                    this.updateConnectionStatus(true);
+                }
+            }
+        } catch (error) {
+            console.error('❌ Erreur polling:', error);
+            this.updateConnectionStatus(false);
+        }
+    }
+
+    // Charger les données depuis l'API
+    async loadData() {
+        try {
+            const response = await fetch('/api/data');
+            if (response.ok) {
+                const result = await response.json();
+                this.data = result;
+                this.lastUpdate = result.timestamp || Date.now();
+                this.renderAllTasks();
+                this.updateBadges();
+                this.updateConnectionStatus(true);
+            } else {
+                throw new Error('Erreur de chargement des données');
+            }
+        } catch (error) {
+            console.error('❌ Erreur lors du chargement:', error);
+            this.updateConnectionStatus(false);
+            throw error;
         }
     }
 
@@ -270,23 +255,6 @@ class MobileTaskManager {
         
         // Scroll vers le haut
         window.scrollTo({ top: 0, behavior: 'smooth' });
-    }
-
-    // Charger les données depuis l'API
-    async loadData() {
-        try {
-            const response = await fetch('/api/data');
-            if (response.ok) {
-                this.data = await response.json();
-                this.renderAllTasks();
-                this.updateBadges();
-            } else {
-                throw new Error('Erreur de chargement des données');
-            }
-        } catch (error) {
-            console.error('❌ Erreur lors du chargement:', error);
-            this.showNotification('error', 'Erreur', 'Impossible de charger les données');
-        }
     }
 
     // Rendu de toutes les tâches
@@ -438,23 +406,31 @@ class MobileTaskManager {
     // Lier les actions des tâches avec gestion touch
     bindTaskActions(container) {
         container.querySelectorAll('[data-action]').forEach(button => {
-            this.addTouchHandler(button, () => {
+            this.addTouchHandler(button, async () => {
                 const action = button.dataset.action;
                 const taskId = button.dataset.taskId;
                 
-                switch (action) {
-                    case 'validate':
-                        this.validateTask(taskId);
-                        break;
-                    case 'reject':
-                        this.rejectTask(taskId);
-                        break;
-                    case 'complete':
-                        this.completeTask(taskId);
-                        break;
-                    case 'delete':
-                        this.deleteTask(taskId);
-                        break;
+                // Désactiver le bouton pendant l'action
+                button.disabled = true;
+                
+                try {
+                    switch (action) {
+                        case 'validate':
+                            await this.validateTask(taskId);
+                            break;
+                        case 'reject':
+                            await this.rejectTask(taskId);
+                            break;
+                        case 'complete':
+                            await this.completeTask(taskId);
+                            break;
+                        case 'delete':
+                            await this.deleteTask(taskId);
+                            break;
+                    }
+                } finally {
+                    // Réactiver le bouton
+                    button.disabled = false;
                 }
             });
         });
@@ -513,13 +489,16 @@ class MobileTaskManager {
                 })
             });
 
-            if (response.ok) {
+            const result = await response.json();
+
+            if (response.ok && result.success) {
                 this.closeTaskModal();
-                this.showNotification('success', 'Tâche proposée', 'En attente de validation');
+                this.showNotification('success', 'Tâche proposée', result.message);
                 this.vibrate();
+                // Recharger immédiatement les données
+                await this.loadData();
             } else {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de la proposition');
+                this.showNotification('error', 'Erreur', result.error || 'Erreur lors de la proposition');
             }
         } catch (error) {
             console.error('❌ Erreur proposition:', error);
@@ -558,9 +537,15 @@ class MobileTaskManager {
                 body: JSON.stringify(body)
             });
 
-            if (!response.ok) {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur', error.error || 'Erreur lors de l\'action');
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                this.showNotification('success', 'Action réussie', result.message);
+                this.vibrate();
+                // Recharger immédiatement les données
+                await this.loadData();
+            } else {
+                this.showNotification('error', 'Erreur', result.error || 'Erreur lors de l\'action');
             }
         } catch (error) {
             console.error('❌ Erreur action:', error);
@@ -608,12 +593,14 @@ class MobileTaskManager {
                 body: JSON.stringify(data)
             });
 
-            if (response.ok) {
-                this.showNotification('success', 'Import réussi', 'Données importées');
+            const result = await response.json();
+
+            if (response.ok && result.success) {
+                this.showNotification('success', 'Import réussi', result.message);
                 this.vibrate();
+                await this.loadData();
             } else {
-                const error = await response.json();
-                this.showNotification('error', 'Erreur d\'import', error.error || 'Format invalide');
+                this.showNotification('error', 'Erreur d\'import', result.error || 'Format invalide');
             }
         } catch (error) {
             console.error('❌ Erreur import:', error);
@@ -659,7 +646,7 @@ class MobileTaskManager {
         } else {
             status.classList.add('disconnected');
             if (icon) icon.className = 'fas fa-exclamation-triangle';
-            if (text) text.textContent = 'Déconnecté';
+            if (text) text.textContent = 'Hors ligne';
         }
     }
 
@@ -669,6 +656,13 @@ class MobileTaskManager {
         const overlay = document.getElementById('loadingOverlay');
         if (overlay) {
             overlay.style.display = show ? 'flex' : 'none';
+        }
+    }
+
+    // Vibration pour les appareils mobiles
+    vibrate(pattern = 200) {
+        if ('vibrate' in navigator) {
+            navigator.vibrate(pattern);
         }
     }
 
@@ -740,7 +734,7 @@ class MobileTaskManager {
 
 // Initialisation de l'application quand le DOM est prêt
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Initialisation de l\'application mobile');
+    console.log('🚀 Initialisation Maya & Rayanha v2.0 - Vercel Edition');
     window.taskManager = new MobileTaskManager();
 });
 
@@ -752,26 +746,3 @@ window.addEventListener('error', (event) => {
 window.addEventListener('unhandledrejection', (event) => {
     console.error('❌ Promise rejetée:', event.reason);
 });
-
-// Gestion de la visibilité de la page (économie de batterie)
-document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-        console.log('📱 Application en arrière-plan');
-    } else {
-        console.log('📱 Application au premier plan');
-        if (window.taskManager && window.taskManager.socket && !window.taskManager.socket.connected) {
-            window.taskManager.socket.connect();
-        }
-    }
-});
-
-// Service Worker pour PWA (si disponible)
-if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
-        navigator.serviceWorker.register('/sw.js').then(() => {
-            console.log('📱 Service Worker enregistré');
-        }).catch(() => {
-            console.log('📱 Service Worker non disponible');
-        });
-    });
-}

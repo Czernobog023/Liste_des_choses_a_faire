@@ -1,21 +1,9 @@
 const express = require('express');
 const cors = require('cors');
-const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 
 const app = express();
-const server = require('http').createServer(app);
-
-// Configuration CORS pour Vercel
-const io = new Server(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST", "DELETE"],
-    credentials: true
-  },
-  transports: ['websocket', 'polling']
-});
 
 // Middleware
 app.use(cors({
@@ -25,32 +13,55 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Stockage en mémoire pour Vercel (temporaire pour cette démo)
-// En production, utiliser une base de données comme MongoDB Atlas ou Supabase
+// Stockage en mémoire pour Vercel (simple pour démo)
 let appData = {
   users: ['Maya l\'abeille', 'Rayanha'],
   tasks: [],
-  pendingTasks: []
+  pendingTasks: [],
+  lastUpdate: Date.now()
 };
 
-// Fonction utilitaire pour réinitialiser les données
-function initializeData() {
-  return {
-    users: ['Maya l\'abeille', 'Rayanha'],
-    tasks: [],
-    pendingTasks: []
-  };
+// Fonction pour notifier un changement
+function updateData() {
+  appData.lastUpdate = Date.now();
 }
 
 // Routes API
 
-// Obtenir toutes les données
+// Obtenir toutes les données avec timestamp
 app.get('/api/data', (req, res) => {
   try {
-    res.json(appData);
+    res.json({
+      ...appData,
+      timestamp: appData.lastUpdate
+    });
   } catch (error) {
     console.error('Erreur lecture données:', error);
     res.status(500).json({ error: 'Erreur lors de la récupération des données' });
+  }
+});
+
+// Polling pour les mises à jour (remplace Socket.IO)
+app.get('/api/poll/:lastUpdate', (req, res) => {
+  try {
+    const clientLastUpdate = parseInt(req.params.lastUpdate);
+    
+    // Si les données ont été mises à jour depuis la dernière fois
+    if (appData.lastUpdate > clientLastUpdate) {
+      res.json({
+        updated: true,
+        data: appData,
+        timestamp: appData.lastUpdate
+      });
+    } else {
+      res.json({
+        updated: false,
+        timestamp: appData.lastUpdate
+      });
+    }
+  } catch (error) {
+    console.error('Erreur polling:', error);
+    res.status(500).json({ error: 'Erreur polling' });
   }
 });
 
@@ -74,11 +85,13 @@ app.post('/api/tasks/propose', (req, res) => {
     };
 
     appData.pendingTasks.push(newTask);
+    updateData();
     
-    // Émettre via Socket.IO
-    io.emit('taskProposed', newTask);
-    
-    res.json(newTask);
+    res.json({
+      success: true,
+      task: newTask,
+      message: 'Tâche proposée avec succès'
+    });
   } catch (error) {
     console.error('Erreur proposition tâche:', error);
     res.status(500).json({ error: 'Erreur lors de la proposition de la tâche' });
@@ -119,16 +132,23 @@ app.post('/api/tasks/:taskId/validate', (req, res) => {
       
       appData.tasks.push(approvedTask);
       appData.pendingTasks.splice(taskIndex, 1);
+      updateData();
       
-      // Notifier tous les clients
-      io.emit('taskApproved', approvedTask);
-      
-      res.json({ message: 'Tâche approuvée et ajoutée', task: approvedTask });
+      res.json({ 
+        success: true,
+        message: 'Tâche approuvée et ajoutée', 
+        task: approvedTask,
+        action: 'approved'
+      });
     } else {
-      // Notifier la validation
-      io.emit('taskValidated', { taskId, userId, validations: task.validations });
+      updateData();
       
-      res.json({ message: 'Validation ajoutée', task });
+      res.json({ 
+        success: true,
+        message: 'Validation ajoutée', 
+        task,
+        action: 'validated'
+      });
     }
   } catch (error) {
     console.error('Erreur validation:', error);
@@ -150,11 +170,14 @@ app.post('/api/tasks/:taskId/reject', (req, res) => {
 
     const rejectedTask = appData.pendingTasks[taskIndex];
     appData.pendingTasks.splice(taskIndex, 1);
+    updateData();
     
-    // Notifier tous les clients
-    io.emit('taskRejected', { taskId, rejectedBy: userId });
-    
-    res.json({ message: 'Tâche rejetée', task: rejectedTask });
+    res.json({ 
+      success: true,
+      message: 'Tâche rejetée', 
+      task: rejectedTask,
+      action: 'rejected'
+    });
   } catch (error) {
     console.error('Erreur rejet:', error);
     res.status(500).json({ error: 'Erreur lors du rejet de la tâche' });
@@ -176,11 +199,14 @@ app.post('/api/tasks/:taskId/complete', (req, res) => {
     task.status = 'completed';
     task.completedBy = userId;
     task.completedAt = new Date().toISOString();
+    updateData();
     
-    // Notifier tous les clients
-    io.emit('taskCompleted', task);
-    
-    res.json(task);
+    res.json({
+      success: true,
+      message: 'Tâche terminée',
+      task,
+      action: 'completed'
+    });
   } catch (error) {
     console.error('Erreur complétion:', error);
     res.status(500).json({ error: 'Erreur lors de la complétion de la tâche' });
@@ -211,10 +237,14 @@ app.delete('/api/tasks/:taskId', (req, res) => {
       ? appData.tasks.splice(taskIndex, 1)[0]
       : appData.pendingTasks.splice(taskIndex, 1)[0];
     
-    // Notifier tous les clients
-    io.emit('taskDeleted', { taskId, deletedBy: userId });
+    updateData();
     
-    res.json({ message: 'Tâche supprimée', task: deletedTask });
+    res.json({ 
+      success: true,
+      message: 'Tâche supprimée', 
+      task: deletedTask,
+      action: 'deleted'
+    });
   } catch (error) {
     console.error('Erreur suppression:', error);
     res.status(500).json({ error: 'Erreur lors de la suppression de la tâche' });
@@ -268,60 +298,55 @@ app.post('/api/import', (req, res) => {
       });
     }
     
-    // Notifier tous les clients
-    io.emit('dataImported', { message: 'Données importées avec succès' });
+    updateData();
     
-    res.json({ message: 'Import réussi', data: appData });
+    res.json({ 
+      success: true,
+      message: 'Import réussi', 
+      data: appData,
+      action: 'imported'
+    });
   } catch (error) {
     console.error('Erreur import:', error);
     res.status(500).json({ error: 'Erreur lors de l\'import des données' });
   }
 });
 
-// Route de santé pour Vercel
+// Route de santé pour vérification
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
     users: appData.users,
     tasksCount: appData.tasks.length,
-    pendingCount: appData.pendingTasks.length
+    pendingCount: appData.pendingTasks.length,
+    lastUpdate: appData.lastUpdate,
+    serverTime: Date.now()
   });
 });
 
-// Servir les fichiers statiques
-app.use('/', express.static(path.join(__dirname, '../public')));
-
-// Route catch-all pour SPA
-app.get('*', (req, res) => {
-  res.sendFile(path.join(__dirname, '../public/index.html'));
-});
-
-// WebSocket pour la communication en temps réel
-io.on('connection', (socket) => {
-  console.log('📱 Utilisateur mobile connecté:', socket.id);
-  
-  // Envoyer les données actuelles au nouveau client
-  socket.emit('initialData', appData);
-  
-  socket.on('disconnect', () => {
-    console.log('📱 Utilisateur mobile déconnecté:', socket.id);
-  });
-  
-  // Gestion de la reconnection
-  socket.on('reconnect', () => {
-    console.log('📱 Utilisateur mobile reconnecté:', socket.id);
-    socket.emit('initialData', appData);
+// Route pour tester la connectivité
+app.get('/api/ping', (req, res) => {
+  res.json({ 
+    pong: true, 
+    timestamp: Date.now() 
   });
 });
 
-// Gestion des erreurs globales
-process.on('uncaughtException', (error) => {
-  console.error('❌ Erreur non gérée:', error);
-});
+// Servir les fichiers statiques en local seulement
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/', express.static(path.join(__dirname, '../public')));
+  
+  // Route catch-all pour SPA en local
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, '../public/index.html'));
+  });
+}
 
-process.on('unhandledRejection', (reason) => {
-  console.error('❌ Promise rejetée:', reason);
+// Gestion des erreurs
+app.use((error, req, res, next) => {
+  console.error('Erreur serveur:', error);
+  res.status(500).json({ error: 'Erreur serveur interne' });
 });
 
 // Export pour Vercel
@@ -330,7 +355,7 @@ module.exports = app;
 // Démarrage local si pas sur Vercel
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
-  server.listen(PORT, '0.0.0.0', () => {
+  app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Serveur Maya & Rayanha démarré sur le port ${PORT}`);
     console.log(`📱 Interface mobile: http://localhost:${PORT}`);
   });
