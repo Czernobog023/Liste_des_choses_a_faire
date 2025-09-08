@@ -55,7 +55,10 @@ class MobileTaskManager {
         if (addTaskBtn) this.addTouchHandler(addTaskBtn, () => this.openTaskModal());
 
         const taskForm = document.getElementById('taskForm');
-        if (taskForm) taskForm.addEventListener('submit', (e) => { e.preventDefault(); this.submitNewTask(); });
+        if (taskForm) taskForm.addEventListener('submit', async (e) => { 
+            e.preventDefault(); 
+            await this.submitNewTask(); 
+        });
 
         const closeModal = document.getElementById('closeModal');
         if (closeModal) this.addTouchHandler(closeModal, () => this.closeTaskModal());
@@ -97,6 +100,7 @@ class MobileTaskManager {
             } else {
                 localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
             }
+            console.log('💾 Données sauvegardées localement.');
         } catch (error) {
             console.error('❌ Erreur de sauvegarde locale:', error);
         }
@@ -121,6 +125,7 @@ class MobileTaskManager {
             if (loadedData) {
                 this.data.tasks = loadedData.tasks || [];
                 this.data.pendingTasks = loadedData.pendingTasks || [];
+                console.log('✅ Données locales chargées.');
             }
         } catch (error) {
             console.error('❌ Erreur de chargement local:', error);
@@ -129,9 +134,16 @@ class MobileTaskManager {
     
     // --- Fonctions de synchronisation et de rendu ---
     startPolling() { 
-        if (!this.pollingInterval) { 
-            this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); 
-        } 
+        this.stopPolling(); // S'assurer qu'il n'y a pas de doublons
+        this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); 
+        console.log('🔄 Polling démarré (toutes les 10s)'); 
+    }
+    stopPolling() {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+            console.log('⏹ Polling arrêté.');
+        }
     }
 
     async syncWithServer() {
@@ -141,8 +153,10 @@ class MobileTaskManager {
             
             const serverData = await response.json();
             
+            const localTempTasks = this.data.pendingTasks.filter(t => String(t.id).startsWith('temp_'));
+            
             this.data.tasks = serverData.tasks || [];
-            this.data.pendingTasks = serverData.pendingTasks || [];
+            this.data.pendingTasks = [...(serverData.pendingTasks || []), ...localTempTasks];
             
             await this.saveData();
             this.renderAllTasks();
@@ -218,7 +232,8 @@ class MobileTaskManager {
             this.addTouchHandler(button, () => {
                 const action = button.dataset.action;
                 const taskId = button.dataset.taskId;
-                this.handleAction(action, taskId);
+                // On appelle la fonction correspondante
+                this[action + 'Task'](taskId);
             });
         });
     }
@@ -227,63 +242,114 @@ class MobileTaskManager {
     // SECTION DES ACTIONS UTILISATEUR (LOGIQUE FINALE ET STABLE)
     // ========================================================================
     
-    async handleAction(action, taskId) {
-        const urlMap = {
-            propose: '/api/tasks/propose',
-            validate: `/api/tasks/${taskId}/validate`,
-            reject: `/api/tasks/${taskId}/reject`,
-            complete: `/api/tasks/${taskId}/complete`,
-            delete: `/api/tasks/${taskId}`
-        };
-        const methodMap = {
-            propose: 'POST', validate: 'POST', reject: 'POST', complete: 'POST', delete: 'DELETE'
-        };
-
-        let body = { userId: this.currentUser };
-        
-        if (action === 'delete' || action === 'reject') {
-            if (!confirm(`Êtes-vous sûr de vouloir ${action === 'delete' ? 'supprimer' : 'rejeter'} cette tâche ?`)) return;
-        }
-
-        this.showLoading(true);
-
+    async sendActionToServer(url, method, body) {
         try {
-            const response = await fetch(urlMap[action], {
-                method: methodMap[action],
+            const response = await fetch(url, {
+                method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...body, sessionId: this.sessionId })
             });
-
-            const result = await response.json();
-            if (!result.success) throw new Error(result.error || 'Erreur du serveur');
-            
-            this.showNotification('success', 'Action réussie !', result.message);
-
-            // MODIFIÉ : On déclenche une synchronisation pour obtenir l'état le plus récent
-            await this.syncWithServer();
-
+            if (!response.ok) throw new Error('La réponse du serveur n\'est pas OK');
+            return await response.json();
         } catch (error) {
-            this.showNotification('error', 'Erreur', error.message);
-        } finally {
-            this.showLoading(false);
+            console.error(`❌ Erreur réseau pour l'action ${method} ${url}:`, error);
+            this.showNotification('error', 'Erreur Réseau', 'L\'action n\'a pas pu être confirmée.');
+            return { success: false, error };
         }
     }
 
-    submitNewTask() {
+    async submitNewTask() {
         const title = document.getElementById('taskTitle').value.trim();
         if (!title) return this.showNotification('warning', 'Erreur', 'Le titre est requis');
         const description = document.getElementById('taskDescription').value.trim();
         this.closeTaskModal();
-        
-        // La nouvelle logique passe par handleAction, on ne fait plus de mise à jour optimiste ici.
-        this.handleAction('propose', null, { title, description, proposedBy: this.currentUser });
+        this.stopPolling();
+
+        const newTask = { 
+            id: `temp_${Date.now()}`, title, description, 
+            proposedBy: this.currentUser, proposedAt: new Date().toISOString(), 
+            validations: [], status: 'pending'
+        };
+        this.data.pendingTasks.push(newTask);
+        this.renderAllTasks();
+        this.updateBadges();
+        await this.saveData();
+
+        await this.sendActionToServer('/api/tasks/propose', 'POST', { tempId: newTask.id, title, description, proposedBy: this.currentUser });
+        await this.syncWithServer();
+        this.startPolling();
     }
 
-    validateTask(taskId) { this.handleAction('validate', taskId); }
-    completeTask(taskId) { this.handleAction('complete', taskId); }
-    rejectTask(taskId) { this.handleAction('reject', taskId); }
-    deleteTask(taskId) { this.handleAction('delete', taskId); }
+    async validateTask(taskId) {
+        const taskIndex = this.data.pendingTasks.findIndex(t => t.id === taskId);
+        if (taskIndex === -1) return;
+        const task = this.data.pendingTasks[taskIndex];
+        if (task.proposedBy === this.currentUser) return this.showNotification('warning', 'Action impossible', 'Vous ne pouvez pas valider votre propre proposition.');
+        
+        this.stopPolling();
+        this.data.pendingTasks.splice(taskIndex, 1);
+        task.status = 'active';
+        task.approvedAt = new Date().toISOString();
+        task.validations.push(this.currentUser);
+        this.data.tasks.push(task);
 
+        this.renderAllTasks();
+        this.updateBadges();
+        await this.saveData();
+        this.showNotification('success', 'Tâche Approuvée !', `${task.title} est maintenant active.`);
+        
+        await this.sendActionToServer(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
+        await this.syncWithServer();
+        this.startPolling();
+    }
+
+    async completeTask(taskId) {
+        const taskIndex = this.data.tasks.findIndex(t => t.id === taskId && t.status !== 'completed');
+        if (taskIndex === -1) return;
+        this.stopPolling();
+
+        const task = this.data.tasks[taskIndex];
+        task.status = 'completed';
+        task.completedBy = this.currentUser;
+        task.completedAt = new Date().toISOString();
+        
+        this.renderAllTasks();
+        this.updateBadges();
+        await this.saveData();
+        this.showNotification('success', 'Tâche Terminée !', `Vous avez terminé : ${task.title}`);
+        
+        await this.sendActionToServer(`/api/tasks/${taskId}/complete`, 'POST', { userId: this.currentUser });
+        await this.syncWithServer();
+        this.startPolling();
+    }
+
+    async rejectTask(taskId) {
+        if (!confirm('Rejeter cette tâche ?')) return;
+        this.stopPolling();
+        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
+        this.renderAllTasks();
+        this.updateBadges();
+        await this.saveData();
+        
+        await this.sendActionToServer(`/api/tasks/${taskId}/reject`, 'POST', { userId: this.currentUser });
+        await this.syncWithServer();
+        this.startPolling();
+    }
+
+    async deleteTask(taskId) {
+        if (!confirm('Supprimer cette tâche définitivement ?')) return;
+        this.stopPolling();
+        this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
+        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
+        this.renderAllTasks();
+        this.updateBadges();
+        await this.saveData();
+
+        await this.sendActionToServer(`/api/tasks/${taskId}`, 'DELETE', { userId: this.currentUser });
+        await this.syncWithServer();
+        this.startPolling();
+    }
+    
     // --- Fonctions utilitaires ---
     openTaskModal() { const modal = document.getElementById('taskModal'); if (modal) { modal.classList.add('show'); document.getElementById('taskTitle')?.focus(); } }
     closeTaskModal() { document.getElementById('taskModal')?.classList.remove('show'); document.getElementById('taskForm')?.reset(); }
@@ -297,7 +363,7 @@ class MobileTaskManager {
     }
     formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
-    showLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
+    showLoading(show) { /* ... */ }
     updateConnectionStatus(connected) { /* ... */ }
     showNotification(type, title, message) { /* ... */ }
 }
