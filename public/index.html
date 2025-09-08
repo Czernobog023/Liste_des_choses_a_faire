@@ -4,259 +4,100 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Maya & Rayanha - Tâches Partagées</title>
-    <meta name="description" content="Application collaborative pour Maya l'abeille et Rayanha">
-    <meta name="theme-color" content="#4F46E5">
+    <meta name="description" content="Application collaborative pour Maya et Rayanha">
     
-    <!-- PWA Manifest -->
-    <link rel="manifest" href="/manifest.json">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="default">
-    <meta name="apple-mobile-web-app-title" content="Maya & Rayanha">
-    
-    <!-- Styles -->
     <link rel="stylesheet" href="css/styles.css">
     
-    <!-- Icons -->
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#4a5568">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
 </head>
 <body>
-    <div class="app">
-        <!-- Header fixe avec sélection utilisateur -->
-        <header class="header">
-            <div class="header-content">
-                <h1 class="header-title">
-                    <i class="fas fa-tasks"></i>
-                    Tâches Partagées
-                </h1>
-                <div class="user-select">
-                    <select id="currentUser" class="user-selector">
-                        <option value="Maya l'abeille">🐝 Maya l'abeille</option>
-                        <option value="Rayanha">🌟 Rayanha</option>
-                    </select>
-                </div>
+
+    <div class="app-container">
+        <header class="app-header">
+            <h1><i class="fas fa-hive"></i> Tâches Partagées</h1>
+            <div class="user-selector">
+                <label for="currentUser" class="sr-only">Utilisateur actuel</label>
+                <select id="currentUser">
+                    <option value="Maya">🐝 Maya</option>
+                    <option value="Rayanha">🌟 Rayanha</option>
+                </select>
             </div>
         </header>
 
-        <!-- Navigation par onglets -->
-        <nav class="nav-tabs">
-            <button class="nav-tab active" data-tab="active" type="button">
-                <i class="fas fa-list-check"></i>
-                <span>Actives</span>
-                <span class="badge" id="activeBadge">0</span>
+        <nav class="app-tabs">
+            <button class="tab-link active" data-tab="pending">
+                <i class="fas fa-clock"></i> En attente <span id="pendingBadge" class="badge">0</span>
             </button>
-            <button class="nav-tab" data-tab="pending" type="button">
-                <i class="fas fa-clock"></i>
-                <span>En attente</span>
-                <span class="badge" id="pendingBadge">0</span>
+            <button class="tab-link" data-tab="active">
+                <i class="fas fa-list-check"></i> Actives <span id="activeBadge" class="badge">0</span>
             </button>
-            <button class="nav-tab" data-tab="completed" type="button">
-                <i class="fas fa-check-circle"></i>
-                <span>Terminées</span>
-            </button>
-            <button class="nav-tab" data-tab="settings" type="button">
-                <i class="fas fa-cog"></i>
-                <span>Options</span>
+            <button class="tab-link" data-tab="completed">
+                <i class="fas fa-check-double"></i> Terminées
             </button>
         </nav>
 
-        <!-- Contenu principal -->
         <main class="main-content">
-            
-            <!-- Section Tâches Actives -->
-            <section id="active-content" class="tab-content active">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <i class="fas fa-list-check"></i>
-                        Tâches Actives
-                    </h2>
-                    <button id="addTaskBtn" class="btn-primary" type="button">
-                        <i class="fas fa-plus"></i>
-                        Nouvelle Tâche
-                    </button>
-                </div>
-                
-                <div class="tasks-container" id="activeTasks">
-                    <!-- Tâches actives générées dynamiquement -->
-                </div>
-                
-                <div class="empty-state" id="activeEmpty" style="display: none;">
-                    <div class="empty-icon">
-                        <i class="fas fa-clipboard-list"></i>
+            <section id="pending-content" class="tab-content active">
+                <div id="pendingTasksContainer" class="tasks-list">
                     </div>
-                    <h3>Aucune tâche active</h3>
-                    <p>Proposez une nouvelle tâche pour commencer !</p>
+                <div id="pendingEmpty" class="empty-state">
+                    <i class="fas fa-hourglass-half"></i>
+                    <p>Aucune tâche en attente de validation.</p>
                 </div>
             </section>
 
-            <!-- Section Tâches en Attente -->
-            <section id="pending-content" class="tab-content">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <i class="fas fa-clock"></i>
-                        Tâches en Attente
-                    </h2>
-                </div>
-                
-                <div class="tasks-container" id="pendingTasks">
-                    <!-- Tâches en attente générées dynamiquement -->
-                </div>
-                
-                <div class="empty-state" id="pendingEmpty" style="display: none;">
-                    <div class="empty-icon">
-                        <i class="fas fa-hourglass-half"></i>
+            <section id="active-content" class="tab-content">
+                <div id="activeTasksContainer" class="tasks-list">
                     </div>
-                    <h3>Aucune tâche en attente</h3>
-                    <p>Toutes les propositions ont été traitées.</p>
+                <div id="activeEmpty" class="empty-state">
+                    <i class="fas fa-mug-saucer"></i>
+                    <p>Aucune tâche active. Validez une tâche pour commencer !</p>
                 </div>
             </section>
 
-            <!-- Section Tâches Terminées -->
             <section id="completed-content" class="tab-content">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <i class="fas fa-check-circle"></i>
-                        Tâches Terminées
-                    </h2>
-                </div>
-                
-                <div class="tasks-container" id="completedTasks">
-                    <!-- Tâches terminées générées dynamiquement -->
-                </div>
-                
-                <div class="empty-state" id="completedEmpty" style="display: none;">
-                    <div class="empty-icon">
-                        <i class="fas fa-trophy"></i>
+                <div id="completedTasksContainer" class="tasks-list">
                     </div>
-                    <h3>Aucune tâche terminée</h3>
-                    <p>Les tâches accomplies apparaîtront ici.</p>
-                </div>
-            </section>
-
-            <!-- Section Options -->
-            <section id="settings-content" class="tab-content">
-                <div class="section-header">
-                    <h2 class="section-title">
-                        <i class="fas fa-cog"></i>
-                        Options & Données
-                    </h2>
-                </div>
-                
-                <div class="settings-grid">
-                    <div class="setting-card">
-                        <div class="setting-header">
-                            <i class="fas fa-download"></i>
-                            <h3>Exporter les données</h3>
-                        </div>
-                        <p>Sauvegardez toutes vos tâches dans un fichier JSON.</p>
-                        <button id="exportBtn" class="btn-secondary" type="button">
-                            <i class="fas fa-download"></i>
-                            Télécharger
-                        </button>
-                    </div>
-
-                    <div class="setting-card">
-                        <div class="setting-header">
-                            <i class="fas fa-upload"></i>
-                            <h3>Importer des données</h3>
-                        </div>
-                        <p>Restaurez des tâches depuis un fichier précédemment exporté.</p>
-                        <input type="file" id="importFile" accept=".json" style="display: none;">
-                        <button id="importBtn" class="btn-secondary" type="button">
-                            <i class="fas fa-upload"></i>
-                            Choisir fichier
-                        </button>
-                    </div>
-
-                    <div class="setting-card">
-                        <div class="setting-header">
-                            <i class="fas fa-info-circle"></i>
-                            <h3>À propos</h3>
-                        </div>
-                        <p>Application collaborative pour Maya l'abeille et Rayanha.</p>
-                        <p class="version">Version 2.0 - Optimisée Mobile</p>
-                    </div>
+                 <div id="completedEmpty" class="empty-state">
+                    <i class="fas fa-trophy"></i>
+                    <p>Aucune tâche terminée pour le moment.</p>
                 </div>
             </section>
         </main>
 
-        <!-- Modal Nouvelle Tâche -->
-        <div id="taskModal" class="modal">
-            <div class="modal-backdrop"></div>
-            <div class="modal-container">
-                <div class="modal-header">
-                    <h3 class="modal-title">
-                        <i class="fas fa-plus-circle"></i>
-                        Nouvelle Tâche
-                    </h3>
-                    <button class="modal-close" type="button" id="closeModal">
-                        <i class="fas fa-times"></i>
-                    </button>
+        <button id="addTaskBtn" class="fab" aria-label="Ajouter une nouvelle tâche">
+            <i class="fas fa-plus"></i>
+        </button>
+    </div>
+
+    <div id="taskModal" class="modal-overlay">
+        <div class="modal-container">
+            <header class="modal-header">
+                <h2 id="modalTitle">Nouvelle Tâche</h2>
+                <button id="closeModalBtn" class="close-btn" aria-label="Fermer la modale">&times;</button>
+            </header>
+            <form id="taskForm" class="modal-body">
+                <div class="form-group">
+                    <label for="taskTitleInput">Titre</label>
+                    <input type="text" id="taskTitleInput" placeholder="Ex: Faire les courses" required>
                 </div>
-                
-                <form id="taskForm" class="modal-body">
-                    <div class="input-group">
-                        <label for="taskTitle" class="input-label">
-                            <i class="fas fa-edit"></i>
-                            Titre de la tâche *
-                        </label>
-                        <input 
-                            type="text" 
-                            id="taskTitle" 
-                            class="input-field"
-                            placeholder="Ex: Faire les courses"
-                            required
-                            maxlength="100"
-                        >
-                    </div>
-                    
-                    <div class="input-group">
-                        <label for="taskDescription" class="input-label">
-                            <i class="fas fa-align-left"></i>
-                            Description (optionnel)
-                        </label>
-                        <textarea 
-                            id="taskDescription" 
-                            class="input-field textarea"
-                            placeholder="Ajoutez des détails sur cette tâche..."
-                            rows="3"
-                            maxlength="500"
-                        ></textarea>
-                    </div>
-                    
-                    <div class="modal-actions">
-                        <button type="button" class="btn-secondary" id="cancelTask">
-                            Annuler
-                        </button>
-                        <button type="submit" class="btn-primary">
-                            <i class="fas fa-paper-plane"></i>
-                            Proposer
-                        </button>
-                    </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- Notifications Toast -->
-        <div id="notifications" class="notifications">
-            <!-- Notifications générées dynamiquement -->
-        </div>
-
-        <!-- Indicateur de connexion -->
-        <div id="connectionStatus" class="connection-status">
-            <i class="fas fa-wifi"></i>
-            <span>Connecté</span>
-        </div>
-
-        <!-- Loading overlay -->
-        <div id="loadingOverlay" class="loading-overlay" style="display: none;">
-            <div class="loading-spinner">
-                <i class="fas fa-spinner fa-spin"></i>
-                <p>Chargement...</p>
-            </div>
+                <div class="form-group">
+                    <label for="taskDescInput">Description (optionnel)</label>
+                    <textarea id="taskDescInput" placeholder="Lait, œufs, pain..." rows="3"></textarea>
+                </div>
+                <footer class="modal-footer">
+                    <button type="submit" class="btn btn-primary">Proposer la Tâche</button>
+                </footer>
+            </form>
         </div>
     </div>
 
-    <!-- Scripts -->
     <script src="js/app.js"></script>
+
 </body>
 </html>
