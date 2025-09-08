@@ -18,22 +18,21 @@ class MobileTaskManager {
         this.init();
     }
     
-    // Générer un ID de session unique
+    // Générer un ID de session partagée fixe pour Maya et Rayanha
     generateSessionId() {
-        // Vérifier s'il y a déjà un sessionId dans le localStorage
-        const existingSession = localStorage.getItem('maya_rayanha_session_id');
-        if (existingSession) {
-            return existingSession;
-        }
+        // Utiliser une session partagée fixe pour que Maya et Rayanha voient les mêmes données
+        const SHARED_SESSION_ID = 'maya_rayanha_shared_session_v3';
         
-        const newSession = 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
-        localStorage.setItem('maya_rayanha_session_id', newSession);
-        return newSession;
+        // Stocker dans localStorage pour persistence
+        localStorage.setItem('maya_rayanha_session_id', SHARED_SESSION_ID);
+        
+        return SHARED_SESSION_ID;
     }
 
     // Initialisation de l'application
     async init() {
-        console.log('🚀 Initialisation Maya & Rayanha v3.1 - Persistance Robuste - Session:', this.sessionId);
+        console.log('🚀 Initialisation Maya & Rayanha v3.1 - Session Partagée:', this.sessionId);
+        console.log('👥 Session collaborative pour Maya et Rayanha');
         
         this.showLoading(true);
         this.setupEventListeners();
@@ -52,10 +51,10 @@ class MobileTaskManager {
             this.startPolling();
             this.startAutoSync();
             
-            this.showNotification('success', 'Connecté', 'Application prête !');
+            this.showNotification('success', 'Connecté', `Application collaborative prête !`);
         } catch (error) {
             console.error('❌ Erreur initialisation:', error);
-            this.showNotification('warning', 'Mode hors ligne', 'Utilisation des données locales');
+            this.showNotification('warning', 'Mode hors ligne', 'Synchronisation en attente...');
             
             // Continuer avec les données locales
             await this.loadLocalData();
@@ -599,7 +598,11 @@ class MobileTaskManager {
                         if (message.task && !this.data.pendingTasks.find(t => t.id === message.task.id)) {
                             this.data.pendingTasks.push(message.task);
                             hasChanges = true;
-                            this.showNotification('info', 'Nouvelle tâche', `${message.task.proposedBy} a proposé: ${message.task.title}`);
+                            // Notifier seulement si ce n'est pas l'utilisateur actuel qui a proposé
+                            if (message.task.proposedBy !== this.currentUser) {
+                                this.showNotification('info', 'Nouvelle tâche', `${message.task.proposedBy} a proposé: ${message.task.title}`);
+                                this.vibrate();
+                            }
                         }
                         break;
                         
@@ -618,8 +621,12 @@ class MobileTaskManager {
                                     taskToValidate.approvedAt = new Date().toISOString();
                                     this.data.tasks.push(taskToValidate);
                                     this.showNotification('success', 'Tâche approuvée', `${taskToValidate.title} est maintenant active !`);
+                                    this.vibrate([200, 100, 200]); // Double vibration pour approbation
                                 } else {
                                     this.showNotification('info', 'Validation', `${message.validatedBy} a validé: ${taskToValidate.title}`);
+                                    if (message.validatedBy !== this.currentUser) {
+                                        this.vibrate();
+                                    }
                                 }
                             }
                         }

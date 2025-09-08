@@ -74,13 +74,25 @@ app.post('/api/tasks/propose', (req, res) => {
       status: 'pending'
     };
 
+    // Utiliser la session partagée pour Maya et Rayanha
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
+    // Ajouter la tâche directement à la session partagée
+    const session = globalState.sessions.get(targetSessionId);
+    if (session) {
+      session.data.pendingTasks.push(task);
+      session.lastUpdate = Date.now();
+    }
+    
     // Créer un message de notification
     const notification = {
       id: uuidv4(),
       type: 'taskProposed',
       task,
       fromUser: proposedBy,
-      sessionId,
+      sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
@@ -92,11 +104,14 @@ app.post('/api/tasks/propose', (req, res) => {
       globalState.messages = globalState.messages.slice(-100);
     }
 
+    console.log(`✅ Nouvelle tâche proposée par ${proposedBy}: "${task.title}" (Session: ${targetSessionId})`);
+    
     res.json({ 
       success: true, 
       message: 'Tâche proposée avec succès',
       task,
-      messageId: notification.id
+      messageId: notification.id,
+      sessionId: targetSessionId
     });
   } catch (error) {
     console.error('Erreur proposition tâche:', error);
@@ -114,13 +129,18 @@ app.post('/api/tasks/:taskId/validate', (req, res) => {
       return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
+    // Utiliser la session partagée pour Maya et Rayanha
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     // Créer un message de validation
     const validation = {
       id: uuidv4(),
       type: 'taskValidated',
       taskId,
       validatedBy: userId,
-      sessionId,
+      sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
@@ -148,12 +168,16 @@ app.post('/api/tasks/:taskId/reject', (req, res) => {
       return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     const rejection = {
       id: uuidv4(),
       type: 'taskRejected',
       taskId,
       rejectedBy: userId,
-      sessionId,
+      sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
@@ -181,13 +205,17 @@ app.post('/api/tasks/:taskId/complete', (req, res) => {
       return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     const completion = {
       id: uuidv4(),
       type: 'taskCompleted',
       taskId,
       completedBy: userId,
       completedAt: new Date().toISOString(),
-      sessionId,
+      sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
@@ -215,12 +243,16 @@ app.delete('/api/tasks/:taskId', (req, res) => {
       return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     const deletion = {
       id: uuidv4(),
       type: 'taskDeleted',
       taskId,
       deletedBy: userId,
-      sessionId,
+      sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
@@ -257,11 +289,17 @@ app.post('/api/sync', (req, res) => {
 
     cleanupGlobalState();
     
+    // Utiliser la session partagée si c'est Maya/Rayanha, sinon créer une session individuelle
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    
+    const actualSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     // Mettre à jour la session
-    const session = globalState.sessions.get(sessionId) || {
+    const session = globalState.sessions.get(actualSessionId) || {
       data: { users: ['Maya l\'abeille', 'Rayanha'], tasks: [], pendingTasks: [] },
       lastUpdate: Date.now(),
-      participants: new Set()
+      participants: new Set(['Maya l\'abeille', 'Rayanha'])
     };
     
     // Merge les données client avec les données de session
@@ -274,7 +312,9 @@ app.post('/api/sync', (req, res) => {
     }
     
     session.lastUpdate = Date.now();
-    globalState.sessions.set(sessionId, session);
+    globalState.sessions.set(actualSessionId, session);
+    
+    console.log(`🔄 Sync pour session ${actualSessionId}: ${session.data.tasks.length} tâches, ${session.data.pendingTasks.length} en attente`);
 
     res.json({ 
       success: true,
@@ -297,11 +337,18 @@ app.get('/api/poll/:sessionId/:since', (req, res) => {
     
     cleanupGlobalState();
     
-    // Récupérer les messages pour cette session depuis 'since'
+    // Pour la session partagée Maya/Rayanha, récupérer tous les messages pertinents
+    const useSharedSession = sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
     const relevantMessages = globalState.messages.filter(msg => 
       msg.timestamp > sinceTimestamp && 
-      (msg.sessionId === sessionId || !msg.sessionId)
+      (msg.sessionId === targetSessionId || msg.sessionId === globalState.SHARED_SESSION_ID || !msg.sessionId)
     );
+    
+    console.log(`📡 Polling session ${targetSessionId}: ${relevantMessages.length} nouveaux messages`);
     
     if (relevantMessages.length > 0) {
       res.json({
@@ -328,19 +375,37 @@ app.get('/api/data', (req, res) => {
     
     cleanupGlobalState();
     
-    if (sessionId && globalState.sessions.has(sessionId)) {
-      const session = globalState.sessions.get(sessionId);
+    // Utiliser la session partagée pour Maya/Rayanha
+    const useSharedSession = !sessionId || sessionId === globalState.SHARED_SESSION_ID || 
+                            sessionId.includes('maya_rayanha');
+    
+    const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
+    
+    if (globalState.sessions.has(targetSessionId)) {
+      const session = globalState.sessions.get(targetSessionId);
+      console.log(`📖 Récupération données session ${targetSessionId}: ${session.data.tasks.length} tâches, ${session.data.pendingTasks.length} en attente`);
       res.json({
         ...session.data,
         timestamp: session.lastUpdate
       });
     } else {
-      // Données par défaut
+      // Créer la session partagée si elle n'existe pas encore
+      const newSession = {
+        data: {
+          users: ['Maya l\'abeille', 'Rayanha'],
+          tasks: [],
+          pendingTasks: []
+        },
+        lastUpdate: Date.now(),
+        participants: new Set(['Maya l\'abeille', 'Rayanha'])
+      };
+      
+      globalState.sessions.set(targetSessionId, newSession);
+      
+      console.log(`🆕 Création nouvelle session partagée ${targetSessionId}`);
       res.json({
-        users: ['Maya l\'abeille', 'Rayanha'],
-        tasks: [],
-        pendingTasks: [],
-        timestamp: Date.now()
+        ...newSession.data,
+        timestamp: newSession.lastUpdate
       });
     }
   } catch (error) {
