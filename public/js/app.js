@@ -608,26 +608,33 @@ class MobileTaskManager {
                         
                     case 'taskValidated':
                         const taskToValidate = this.data.pendingTasks.find(t => t.id === message.taskId);
-                        if (taskToValidate) {
-                            if (!taskToValidate.validations) taskToValidate.validations = [];
-                            if (!taskToValidate.validations.includes(message.validatedBy)) {
-                                taskToValidate.validations.push(message.validatedBy);
+                        if (taskToValidate && message.validations) {
+                            // Mettre à jour les validations depuis le serveur
+                            taskToValidate.validations = message.validations;
+                            hasChanges = true;
+                            
+                            this.showNotification('info', 'Validation', `${message.validatedBy} a validé: ${taskToValidate.title} (${message.validations.length}/2)`);
+                            if (message.validatedBy !== this.currentUser) {
+                                this.vibrate();
+                            }
+                        }
+                        break;
+                        
+                    case 'taskApproved':
+                        // Tâche approuvée par validation bipartite - le serveur a déjà fait le transfert
+                        const pendingTask = this.data.pendingTasks.find(t => t.id === message.taskId);
+                        if (pendingTask) {
+                            // Supprimer de pending et ajouter à active
+                            this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== message.taskId);
+                            
+                            if (message.task) {
+                                this.data.tasks.push(message.task);
                                 hasChanges = true;
                                 
-                                // Si les deux utilisateurs ont validé, déplacer vers les tâches actives
-                                if (taskToValidate.validations.length >= 2) {
-                                    this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== message.taskId);
-                                    taskToValidate.status = 'active';
-                                    taskToValidate.approvedAt = new Date().toISOString();
-                                    this.data.tasks.push(taskToValidate);
-                                    this.showNotification('success', 'Tâche approuvée', `${taskToValidate.title} est maintenant active !`);
-                                    this.vibrate([200, 100, 200]); // Double vibration pour approbation
-                                } else {
-                                    this.showNotification('info', 'Validation', `${message.validatedBy} a validé: ${taskToValidate.title}`);
-                                    if (message.validatedBy !== this.currentUser) {
-                                        this.vibrate();
-                                    }
-                                }
+                                this.showNotification('success', 'Tâche approuvée !', `${message.task.title} est maintenant active`);
+                                this.vibrate([200, 100, 200]); // Double vibration pour approbation
+                                
+                                console.log(`✅ Tâche ${message.task.title} transférée vers Activités après validation bipartite`);
                             }
                         }
                         break;

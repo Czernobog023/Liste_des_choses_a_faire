@@ -134,23 +134,77 @@ app.post('/api/tasks/:taskId/validate', (req, res) => {
                             sessionId.includes('maya_rayanha');
     const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
     
-    // Créer un message de validation
+    cleanupGlobalState();
+    
+    // Récupérer la session et modifier directement les données
+    const session = globalState.sessions.get(targetSessionId);
+    if (!session) {
+      return res.status(404).json({ error: 'Session non trouvée' });
+    }
+    
+    // Trouver la tâche dans pendingTasks
+    const taskIndex = session.data.pendingTasks.findIndex(t => t.id === taskId);
+    if (taskIndex === -1) {
+      return res.status(404).json({ error: 'Tâche non trouvée dans les tâches en attente' });
+    }
+    
+    const task = session.data.pendingTasks[taskIndex];
+    
+    // Vérifier si l'utilisateur a déjà validé
+    if (!task.validations) task.validations = [];
+    if (task.validations.includes(userId)) {
+      return res.status(400).json({ error: 'Vous avez déjà validé cette tâche' });
+    }
+    
+    // Ajouter la validation
+    task.validations.push(userId);
+    task.lastValidation = new Date().toISOString();
+    
+    let resultMessage = `Validation de ${userId} enregistrée`;
+    let taskApproved = false;
+    
+    // Vérifier si les 2 utilisateurs ont validé (bipartite)
+    if (task.validations.length >= 2) {
+      // Déplacer vers les tâches actives
+      session.data.pendingTasks.splice(taskIndex, 1);
+      
+      task.status = 'active';
+      task.approvedAt = new Date().toISOString();
+      session.data.tasks.push(task);
+      
+      resultMessage = `Tâche approuvée et activée: ${task.title}`;
+      taskApproved = true;
+      
+      console.log(`✅ Tâche approuvée (bipartite): "${task.title}" par ${task.validations.join(' et ')}`);
+    } else {
+      console.log(`⏳ Validation partielle: "${task.title}" par ${userId} (${task.validations.length}/2)`);
+    }
+    
+    // Mettre à jour la session
+    session.lastUpdate = Date.now();
+    globalState.sessions.set(targetSessionId, session);
+    
+    // Créer un message de notification
     const validation = {
       id: uuidv4(),
-      type: 'taskValidated',
+      type: taskApproved ? 'taskApproved' : 'taskValidated',
       taskId,
       validatedBy: userId,
+      task: taskApproved ? task : null,
+      validations: task.validations,
+      approved: taskApproved,
       sessionId: targetSessionId,
       timestamp: Date.now()
     };
 
-    cleanupGlobalState();
     globalState.messages.push(validation);
 
     res.json({ 
       success: true, 
-      message: 'Validation enregistrée',
-      validation
+      message: resultMessage,
+      validation,
+      taskApproved,
+      validationsCount: task.validations.length
     });
   } catch (error) {
     console.error('Erreur validation:', error);
@@ -172,6 +226,21 @@ app.post('/api/tasks/:taskId/reject', (req, res) => {
                             sessionId.includes('maya_rayanha');
     const targetSessionId = useSharedSession ? globalState.SHARED_SESSION_ID : sessionId;
     
+    cleanupGlobalState();
+    
+    // Récupérer la session et supprimer la tâche des pendingTasks
+    const session = globalState.sessions.get(targetSessionId);
+    if (session) {
+      const taskIndex = session.data.pendingTasks.findIndex(t => t.id === taskId);
+      if (taskIndex !== -1) {
+        const rejectedTask = session.data.pendingTasks[taskIndex];
+        session.data.pendingTasks.splice(taskIndex, 1);
+        session.lastUpdate = Date.now();
+        
+        console.log(`❌ Tâche rejetée et supprimée: "${rejectedTask.title}" par ${userId}`);
+      }
+    }
+    
     const rejection = {
       id: uuidv4(),
       type: 'taskRejected',
@@ -181,12 +250,11 @@ app.post('/api/tasks/:taskId/reject', (req, res) => {
       timestamp: Date.now()
     };
 
-    cleanupGlobalState();
     globalState.messages.push(rejection);
 
     res.json({ 
       success: true, 
-      message: 'Tâche rejetée',
+      message: 'Tâche rejetée et supprimée',
       rejection
     });
   } catch (error) {
