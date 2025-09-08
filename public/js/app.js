@@ -52,7 +52,7 @@ class MobileTaskManager {
             this.startPolling();
             this.startAutoSync();
             
-            this.showNotification('success', 'Connecté', 'Application prête avec persistance robuste !');
+            this.showNotification('success', 'Connecté', 'Application prête !');
         } catch (error) {
             console.error('❌ Erreur initialisation:', error);
             this.showNotification('warning', 'Mode hors ligne', 'Utilisation des données locales');
@@ -1063,7 +1063,7 @@ class MobileTaskManager {
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                this.showNotification('success', 'Export réussi', 'Fichier téléchargé avec persistance');
+                this.showNotification('success', 'Export réussi', 'Fichier téléchargé');
             } else {
                 // Fallback: export local
                 this.exportLocalData();
