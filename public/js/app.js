@@ -1008,9 +1008,31 @@ class MobileTaskManager {
     }
 
     // Actions sur les tâches
-    async validateTask(taskId) {
-        await this.performTaskAction(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
+   async validateTask(taskId) {
+    // --- MISE À JOUR OPTIMISTE ---
+    // On trouve la tâche dans nos données locales
+    const task = this.data.pendingTasks.find(t => t.id === taskId);
+
+    if (task) {
+        // On ajoute la validation de l'utilisateur actuel localement
+        if (!task.validations) {
+            task.validations = [];
+        }
+        if (!task.validations.includes(this.currentUser)) {
+            task.validations.push(this.currentUser);
+        }
+
+        // On met à jour l'affichage IMMÉDIATEMENT
+        console.log('🔄 Mise à jour optimiste : affichage mis à jour localement.');
+        this.renderAllTasks();
+        this.updateBadges();
     }
+    // --- FIN DE LA MISE À JOUR OPTIMISTE ---
+
+    // On envoie la requête au serveur comme avant pour rendre le changement permanent
+    // La fonction syncWithServer() corrigera toute éventuelle erreur plus tard.
+    await this.performTaskAction(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
+}
 
     async rejectTask(taskId) {
         if (!confirm('Rejeter cette tâche ?')) return;
