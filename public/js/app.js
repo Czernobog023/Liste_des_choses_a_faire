@@ -24,12 +24,10 @@ class MobileTaskManager {
         console.log('🚀 Initialisation...');
         this.setupEventListeners();
         
-        // 1. Charger les données locales pour un affichage instantané
         await this.loadLocalData();
         this.renderAllTasks();
         this.updateBadges();
         
-        // 2. Synchroniser avec le serveur en arrière-plan
         try {
             await this.syncWithServer();
             this.showNotification('success', 'Connecté', 'Application synchronisée !');
@@ -37,7 +35,6 @@ class MobileTaskManager {
             this.showNotification('warning', 'Mode hors ligne', 'Impossible de synchroniser.');
         }
 
-        // 3. Lancer le polling pour les mises à jour en temps réel
         this.startPolling();
     }
 
@@ -76,14 +73,14 @@ class MobileTaskManager {
 
     // --- Fonctions de persistance des données ---
     async initStorage() {
-        if (this.db) return; // Déjà initialisé
+        if (this.db) return;
         return new Promise((resolve) => {
             if (!window.indexedDB) {
                 console.warn('IndexedDB non supporté, fallback sur localStorage.');
                 return resolve();
             }
             const request = indexedDB.open('MayaRayanhaDB', 3);
-            request.onerror = () => resolve(); // En cas d'erreur, on utilisera localStorage
+            request.onerror = () => resolve();
             request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
             request.onupgradeneeded = (e) => {
                 if (!e.target.result.objectStoreNames.contains('appData')) {
@@ -164,7 +161,6 @@ class MobileTaskManager {
     }
 
     switchTab(tabName) {
-        console.log(`-> Basculement vers l'onglet : '${tabName}'`);
         document.querySelectorAll('.nav-tab, .tab-content').forEach(el => el.classList.remove('active'));
         const tabToActivate = document.querySelector(`[data-tab="${tabName}"]`);
         const contentToActivate = document.getElementById(`${tabName}-content`);
@@ -335,7 +331,16 @@ class MobileTaskManager {
         .then(response => response.json())
         .then(result => {
             if (result.success) {
-                console.log(`📡 Action [${method}] réussie. Le serveur mettra à jour.`);
+                console.log(`📡 Action [${method}] réussie.`);
+                if (method === 'POST' && url.includes('/propose') && result.task && body.tempId) {
+                    const tempTaskIndex = this.data.pendingTasks.findIndex(t => t.id === body.tempId);
+                    if (tempTaskIndex > -1) {
+                        this.data.pendingTasks[tempTaskIndex] = result.task;
+                        this.saveData();
+                        this.renderAllTasks();
+                        this.updateBadges();
+                    }
+                }
             } else {
                 console.error('Erreur serveur en arrière-plan:', result.error);
                 this.syncWithServer();
@@ -359,9 +364,9 @@ class MobileTaskManager {
     }
     formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
-    showLoading(show) { /* ... */ }
-    updateConnectionStatus(connected) { /* ... */ }
-    showNotification(type, title, message) { /* ... */ }
+    showLoading(show) { /* ... (implémentez si besoin) ... */ }
+    updateConnectionStatus(connected) { /* ... (implémentez si besoin) ... */ }
+    showNotification(type, title, message) { /* ... (implémentez si besoin) ... */ }
 }
 
 // Initialisation
