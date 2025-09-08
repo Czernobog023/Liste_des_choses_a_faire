@@ -1,4 +1,4 @@
-// Application Collaborative Maya & Rayanha - Version Vercel Optimisée
+// Application Collaborative Maya & Rayanha - Version Persistante Robuste
 class MobileTaskManager {
     constructor() {
         this.currentUser = 'Maya l\'abeille';
@@ -12,34 +12,53 @@ class MobileTaskManager {
         this.isLoading = false;
         this.pollingInterval = null;
         this.syncInterval = null;
+        this.db = null; // IndexedDB instance
+        this.storageReady = false;
         
         this.init();
     }
     
     // Générer un ID de session unique
     generateSessionId() {
-        return 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        // Vérifier s'il y a déjà un sessionId dans le localStorage
+        const existingSession = localStorage.getItem('maya_rayanha_session_id');
+        if (existingSession) {
+            return existingSession;
+        }
+        
+        const newSession = 'session_' + Math.random().toString(36).substr(2, 9) + '_' + Date.now();
+        localStorage.setItem('maya_rayanha_session_id', newSession);
+        return newSession;
     }
 
     // Initialisation de l'application
     async init() {
-        console.log('🚀 Initialisation Maya & Rayanha v2.1 - Session:', this.sessionId);
+        console.log('🚀 Initialisation Maya & Rayanha v3.1 - Persistance Robuste - Session:', this.sessionId);
         
         this.showLoading(true);
         this.setupEventListeners();
         
         try {
+            // Initialiser le stockage persistent
+            await this.initStorage();
+            
             // Charger les données locales d'abord
-            this.loadLocalData();
+            await this.loadLocalData();
+            
+            // Essayer de charger depuis le serveur
             await this.loadData();
+            
+            // Démarrer la synchronisation
             this.startPolling();
             this.startAutoSync();
-            this.showNotification('success', 'Connecté', 'Application prête !');
+            
+            this.showNotification('success', 'Connecté', 'Application prête avec persistance robuste !');
         } catch (error) {
             console.error('❌ Erreur initialisation:', error);
-            this.showNotification('error', 'Erreur', 'Mode hors ligne activé');
+            this.showNotification('warning', 'Mode hors ligne', 'Utilisation des données locales');
+            
             // Continuer avec les données locales
-            this.loadLocalData();
+            await this.loadLocalData();
             this.renderAllTasks();
             this.updateBadges();
         } finally {
@@ -145,8 +164,29 @@ class MobileTaskManager {
         
         // Sauvegarder avant de quitter
         window.addEventListener('beforeunload', () => {
-            this.saveLocalData();
+            // Utiliser une version synchrone pour beforeunload
+            try {
+                const dataToSave = {
+                    ...this.data,
+                    sessionId: this.sessionId,
+                    savedAt: Date.now(),
+                    version: '3.1'
+                };
+                localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
+                localStorage.setItem('maya_rayanha_emergency_backup', JSON.stringify({
+                    tasks: this.data.tasks,
+                    pendingTasks: this.data.pendingTasks,
+                    timestamp: Date.now()
+                }));
+            } catch (error) {
+                console.error('❌ Erreur sauvegarde d\'urgence:', error);
+            }
         });
+        
+        // Sauvegarder régulièrement (toutes les 30 secondes)
+        setInterval(() => {
+            this.saveLocalData();
+        }, 30000);
     }
 
     // Ajouter un gestionnaire d'événement touch-friendly
@@ -195,39 +235,249 @@ class MobileTaskManager {
         });
     }
 
-    // Sauvegarder les données localement
-    saveLocalData() {
+    // Initialiser le système de stockage (IndexedDB avec fallback localStorage)
+    async initStorage() {
         try {
-            const dataToSave = {
-                ...this.data,
-                sessionId: this.sessionId,
-                savedAt: Date.now()
-            };
-            localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
-            console.log('💾 Données sauvegardées localement');
+            // Essayer d'initialiser IndexedDB
+            await this.initIndexedDB();
+            console.log('💾 Storage IndexedDB initialisé');
         } catch (error) {
-            console.error('❌ Erreur sauvegarde locale:', error);
+            console.warn('⚠️ Fallback vers localStorage:', error);
+            this.storageReady = true; // localStorage toujours prêt
+        }
+    }
+    
+    // Initialiser IndexedDB
+    async initIndexedDB() {
+        return new Promise((resolve, reject) => {
+            if (!window.indexedDB) {
+                reject(new Error('IndexedDB non supporté'));
+                return;
+            }
+            
+            const request = indexedDB.open('MayaRayanhaDB', 2);
+            
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                this.db = request.result;
+                this.storageReady = true;
+                resolve();
+            };
+            
+            request.onupgradeneeded = (event) => {
+                const db = event.target.result;
+                
+                // Créer les stores si nécessaire
+                if (!db.objectStoreNames.contains('tasks')) {
+                    const taskStore = db.createObjectStore('tasks', { keyPath: 'id' });
+                    taskStore.createIndex('status', 'status', { unique: false });
+                    taskStore.createIndex('proposedBy', 'proposedBy', { unique: false });
+                }
+                
+                if (!db.objectStoreNames.contains('sessions')) {
+                    db.createObjectStore('sessions', { keyPath: 'sessionId' });
+                }
+                
+                if (!db.objectStoreNames.contains('metadata')) {
+                    db.createObjectStore('metadata', { keyPath: 'key' });
+                }
+            };
+        });
+    }
+    
+    // Sauvegarder les données avec IndexedDB ou localStorage
+    async saveLocalData() {
+        const dataToSave = {
+            ...this.data,
+            sessionId: this.sessionId,
+            savedAt: Date.now(),
+            version: '3.1'
+        };
+        
+        try {
+            if (this.db && this.storageReady) {
+                // Sauvegarder dans IndexedDB
+                await this.saveToIndexedDB(dataToSave);
+                console.log('💾 Données sauvegardées dans IndexedDB');
+            } else {
+                // Fallback localStorage
+                this.saveToLocalStorage(dataToSave);
+                console.log('💾 Données sauvegardées dans localStorage');
+            }
+        } catch (error) {
+            console.error('❌ Erreur sauvegarde:', error);
+            // Toujours essayer localStorage en dernier recours
+            this.saveToLocalStorage(dataToSave);
+        }
+    }
+    
+    // Sauvegarder dans IndexedDB
+    async saveToIndexedDB(data) {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions', 'tasks', 'metadata'], 'readwrite');
+            
+            transaction.onerror = () => reject(transaction.error);
+            transaction.oncomplete = () => resolve();
+            
+            // Sauvegarder la session
+            const sessionStore = transaction.objectStore('sessions');
+            sessionStore.put({
+                sessionId: this.sessionId,
+                data: data,
+                lastUpdate: Date.now()
+            });
+            
+            // Sauvegarder les tâches individuellement pour un meilleur contrôle
+            const taskStore = transaction.objectStore('tasks');
+            
+            // Vider et recréer toutes les tâches
+            taskStore.clear();
+            
+            [...data.tasks, ...data.pendingTasks].forEach(task => {
+                taskStore.put(task);
+            });
+            
+            // Métadonnées
+            const metaStore = transaction.objectStore('metadata');
+            metaStore.put({
+                key: 'lastSave',
+                value: Date.now(),
+                sessionId: this.sessionId
+            });
+        });
+    }
+    
+    // Sauvegarder dans localStorage
+    saveToLocalStorage(data) {
+        try {
+            localStorage.setItem('maya_rayanha_data', JSON.stringify(data));
+            localStorage.setItem('maya_rayanha_tasks_backup', JSON.stringify({
+                tasks: data.tasks,
+                pendingTasks: data.pendingTasks,
+                timestamp: Date.now()
+            }));
+        } catch (error) {
+            console.error('❌ Erreur localStorage:', error);
+            // Si localStorage est plein, essayer de nettoyer
+            this.cleanupLocalStorage();
+        }
+    }
+    
+    // Nettoyer localStorage en cas de saturation
+    cleanupLocalStorage() {
+        try {
+            // Garder seulement les données essentielles
+            const essentialKeys = ['maya_rayanha_data', 'maya_rayanha_session_id', 'maya_rayanha_tasks_backup'];
+            
+            Object.keys(localStorage).forEach(key => {
+                if (!essentialKeys.includes(key) && !key.startsWith('maya_rayanha_')) {
+                    localStorage.removeItem(key);
+                }
+            });
+            
+            console.log('🧹 localStorage nettoyé');
+        } catch (error) {
+            console.error('❌ Erreur nettoyage localStorage:', error);
         }
     }
 
-    // Charger les données locales
-    loadLocalData() {
+    // Charger les données locales (IndexedDB ou localStorage)
+    async loadLocalData() {
+        try {
+            let loadedData = null;
+            
+            if (this.db && this.storageReady) {
+                // Essayer de charger depuis IndexedDB
+                loadedData = await this.loadFromIndexedDB();
+                console.log('📱 Données chargées depuis IndexedDB');
+            } 
+            
+            if (!loadedData) {
+                // Fallback vers localStorage
+                loadedData = this.loadFromLocalStorage();
+                console.log('📱 Données chargées depuis localStorage');
+            }
+            
+            if (loadedData) {
+                // Valider et appliquer les données chargées
+                this.data = {
+                    users: loadedData.users || this.data.users,
+                    tasks: Array.isArray(loadedData.tasks) ? loadedData.tasks : [],
+                    pendingTasks: Array.isArray(loadedData.pendingTasks) ? loadedData.pendingTasks : []
+                };
+                
+                this.renderAllTasks();
+                this.updateBadges();
+            }
+        } catch (error) {
+            console.error('❌ Erreur chargement local:', error);
+            // En cas d'erreur, utiliser les données par défaut
+            this.data = {
+                users: ['Maya l\'abeille', 'Rayanha'],
+                tasks: [],
+                pendingTasks: []
+            };
+        }
+    }
+    
+    // Charger depuis IndexedDB
+    async loadFromIndexedDB() {
+        return new Promise((resolve, reject) => {
+            const transaction = this.db.transaction(['sessions'], 'readonly');
+            const store = transaction.objectStore('sessions');
+            const request = store.get(this.sessionId);
+            
+            request.onsuccess = () => {
+                const result = request.result;
+                if (result && result.data) {
+                    // Vérifier que les données ne sont pas trop anciennes (< 7 jours)
+                    const weekInMs = 7 * 24 * 60 * 60 * 1000;
+                    if (Date.now() - result.data.savedAt < weekInMs) {
+                        resolve(result.data);
+                    } else {
+                        resolve(null);
+                    }
+                } else {
+                    resolve(null);
+                }
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
+    }
+    
+    // Charger depuis localStorage
+    loadFromLocalStorage() {
         try {
             const savedData = localStorage.getItem('maya_rayanha_data');
             if (savedData) {
                 const parsed = JSON.parse(savedData);
-                // Ne charger que si les données sont récentes (< 24h)
-                if (Date.now() - parsed.savedAt < 24 * 60 * 60 * 1000) {
-                    this.data = {
-                        users: parsed.users || this.data.users,
-                        tasks: parsed.tasks || [],
-                        pendingTasks: parsed.pendingTasks || []
-                    };
-                    console.log('📱 Données locales chargées');
+                // Ne charger que si les données sont récentes (< 48h pour localStorage)
+                const maxAge = 48 * 60 * 60 * 1000;
+                if (parsed.savedAt && Date.now() - parsed.savedAt < maxAge) {
+                    return parsed;
                 }
             }
+            
+            // Essayer le backup
+            const backupData = localStorage.getItem('maya_rayanha_tasks_backup');
+            if (backupData) {
+                const backup = JSON.parse(backupData);
+                const maxAge = 24 * 60 * 60 * 1000;
+                if (backup.timestamp && Date.now() - backup.timestamp < maxAge) {
+                    return {
+                        users: ['Maya l\'abeille', 'Rayanha'],
+                        tasks: backup.tasks || [],
+                        pendingTasks: backup.pendingTasks || [],
+                        savedAt: backup.timestamp
+                    };
+                }
+            }
+            
+            return null;
         } catch (error) {
-            console.error('❌ Erreur chargement local:', error);
+            console.error('❌ Erreur chargement localStorage:', error);
+            return null;
         }
     }
 
@@ -268,7 +518,7 @@ class MobileTaskManager {
             if (response.ok) {
                 const result = await response.json();
                 if (result.success && result.mergedData) {
-                    // Mettre à jour avec les données mergées
+                    // Vérifier s'il y a des changements
                     const hasChanges = JSON.stringify(this.data) !== JSON.stringify(result.mergedData);
                     
                     if (hasChanges) {
@@ -276,7 +526,7 @@ class MobileTaskManager {
                         this.lastUpdate = result.mergedData.timestamp;
                         this.renderAllTasks();
                         this.updateBadges();
-                        this.saveLocalData();
+                        await this.saveLocalData();
                         console.log('📡 Données synchronisées');
                     }
                 }
@@ -285,6 +535,8 @@ class MobileTaskManager {
         } catch (error) {
             console.error('❌ Erreur synchronisation:', error);
             this.updateConnectionStatus(false);
+            // En cas d'erreur, sauvegarder quand même localement
+            await this.saveLocalData();
         }
     }
 
@@ -317,14 +569,17 @@ class MobileTaskManager {
             if (response.ok) {
                 const result = await response.json();
                 
-                if (result.updated) {
-                    console.log('📱 Nouvelles données reçues via polling');
-                    this.data = result.data;
+                if (result.updated && result.messages) {
+                    console.log('📱 Nouvelles mises à jour reçues via polling:', result.messages.length);
+                    
+                    // Traiter les messages reçus
+                    await this.processMessages(result.messages);
+                    
                     this.lastUpdate = result.timestamp;
-                    this.renderAllTasks();
-                    this.updateBadges();
-                    this.saveLocalData();
                     this.updateConnectionStatus(true);
+                    
+                    // Sauvegarder après traitement
+                    await this.saveLocalData();
                 }
             }
         } catch (error) {
@@ -332,18 +587,98 @@ class MobileTaskManager {
             this.updateConnectionStatus(false);
         }
     }
+    
+    // Traiter les messages de synchronisation
+    async processMessages(messages) {
+        let hasChanges = false;
+        
+        for (const message of messages) {
+            try {
+                switch (message.type) {
+                    case 'taskProposed':
+                        if (message.task && !this.data.pendingTasks.find(t => t.id === message.task.id)) {
+                            this.data.pendingTasks.push(message.task);
+                            hasChanges = true;
+                            this.showNotification('info', 'Nouvelle tâche', `${message.task.proposedBy} a proposé: ${message.task.title}`);
+                        }
+                        break;
+                        
+                    case 'taskValidated':
+                        const taskToValidate = this.data.pendingTasks.find(t => t.id === message.taskId);
+                        if (taskToValidate) {
+                            if (!taskToValidate.validations) taskToValidate.validations = [];
+                            if (!taskToValidate.validations.includes(message.validatedBy)) {
+                                taskToValidate.validations.push(message.validatedBy);
+                                hasChanges = true;
+                                
+                                // Si les deux utilisateurs ont validé, déplacer vers les tâches actives
+                                if (taskToValidate.validations.length >= 2) {
+                                    this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== message.taskId);
+                                    taskToValidate.status = 'active';
+                                    taskToValidate.approvedAt = new Date().toISOString();
+                                    this.data.tasks.push(taskToValidate);
+                                    this.showNotification('success', 'Tâche approuvée', `${taskToValidate.title} est maintenant active !`);
+                                } else {
+                                    this.showNotification('info', 'Validation', `${message.validatedBy} a validé: ${taskToValidate.title}`);
+                                }
+                            }
+                        }
+                        break;
+                        
+                    case 'taskRejected':
+                        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== message.taskId);
+                        hasChanges = true;
+                        this.showNotification('warning', 'Tâche rejetée', `Tâche rejetée par ${message.rejectedBy}`);
+                        break;
+                        
+                    case 'taskCompleted':
+                        const taskToComplete = this.data.tasks.find(t => t.id === message.taskId);
+                        if (taskToComplete) {
+                            taskToComplete.status = 'completed';
+                            taskToComplete.completedBy = message.completedBy;
+                            taskToComplete.completedAt = message.completedAt;
+                            hasChanges = true;
+                            this.showNotification('success', 'Tâche terminée', `${message.completedBy} a terminé: ${taskToComplete.title}`);
+                        }
+                        break;
+                        
+                    case 'taskDeleted':
+                        this.data.tasks = this.data.tasks.filter(t => t.id !== message.taskId);
+                        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== message.taskId);
+                        hasChanges = true;
+                        this.showNotification('info', 'Tâche supprimée', `Tâche supprimée par ${message.deletedBy}`);
+                        break;
+                }
+            } catch (error) {
+                console.error('❌ Erreur traitement message:', message, error);
+            }
+        }
+        
+        if (hasChanges) {
+            this.renderAllTasks();
+            this.updateBadges();
+            this.vibrate();
+        }
+    }
 
     // Charger les données depuis l'API
     async loadData() {
         try {
-            const response = await fetch('/api/data');
+            const response = await fetch(`/api/data?sessionId=${this.sessionId}`);
             if (response.ok) {
                 const result = await response.json();
-                this.data = result;
+                
+                // Merger intelligemment avec les données locales
+                const mergedData = this.mergeData(this.data, result);
+                this.data = mergedData;
                 this.lastUpdate = result.timestamp || Date.now();
+                
                 this.renderAllTasks();
                 this.updateBadges();
                 this.updateConnectionStatus(true);
+                
+                // Sauvegarder les données mergées
+                await this.saveLocalData();
             } else {
                 throw new Error('Erreur de chargement des données');
             }
@@ -352,6 +687,33 @@ class MobileTaskManager {
             this.updateConnectionStatus(false);
             throw error;
         }
+    }
+    
+    // Merger intelligemment les données locales et serveur
+    mergeData(localData, serverData) {
+        // Utiliser les données du serveur comme base
+        const merged = {
+            users: serverData.users || localData.users,
+            tasks: [...(serverData.tasks || [])],
+            pendingTasks: [...(serverData.pendingTasks || [])]
+        };
+        
+        // Ajouter les tâches locales qui ne sont pas sur le serveur
+        const serverTaskIds = new Set([...merged.tasks, ...merged.pendingTasks].map(t => t.id));
+        
+        localData.tasks.forEach(task => {
+            if (!serverTaskIds.has(task.id)) {
+                merged.tasks.push(task);
+            }
+        });
+        
+        localData.pendingTasks.forEach(task => {
+            if (!serverTaskIds.has(task.id)) {
+                merged.pendingTasks.push(task);
+            }
+        });
+        
+        return merged;
     }
 
     // Changer d'onglet
@@ -616,7 +978,7 @@ class MobileTaskManager {
                 this.data.pendingTasks.push(result.task);
                 this.renderAllTasks();
                 this.updateBadges();
-                this.saveLocalData();
+                await this.saveLocalData();
                 
                 // Synchroniser avec le serveur
                 await this.syncWithServer();
@@ -678,7 +1040,7 @@ class MobileTaskManager {
             console.error('❌ Erreur action:', error);
             this.showNotification('error', 'Erreur', 'Erreur de connexion - Action sauvegardée localement');
             // En cas d'erreur, sauvegarder l'action localement pour retry plus tard
-            this.saveLocalData();
+            await this.saveLocalData();
         } finally {
             this.showLoading(false);
         }
@@ -687,22 +1049,60 @@ class MobileTaskManager {
     // Export des données
     async exportData() {
         try {
-            const response = await fetch('/api/export');
+            // Sauvegarder d'abord les données actuelles
+            await this.saveLocalData();
+            
+            const response = await fetch(`/api/export?sessionId=${this.sessionId}`);
             if (response.ok) {
                 const blob = await response.blob();
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `maya-rayanha-taches-${new Date().toISOString().split('T')[0]}.json`;
+                a.download = `maya-rayanha-taches-${this.sessionId}-${new Date().toISOString().split('T')[0]}.json`;
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                this.showNotification('success', 'Export réussi', 'Fichier téléchargé');
+                this.showNotification('success', 'Export réussi', 'Fichier téléchargé avec persistance');
+            } else {
+                // Fallback: export local
+                this.exportLocalData();
             }
         } catch (error) {
-            console.error('❌ Erreur export:', error);
-            this.showNotification('error', 'Erreur', 'Erreur lors de l\'export');
+            console.error('❌ Erreur export serveur:', error);
+            // Fallback: export des données locales
+            this.exportLocalData();
+        }
+    }
+    
+    // Export des données locales en cas d'échec du serveur
+    exportLocalData() {
+        try {
+            const exportData = {
+                ...this.data,
+                sessionId: this.sessionId,
+                exportedAt: new Date().toISOString(),
+                version: '3.1',
+                source: 'local'
+            };
+            
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], {
+                type: 'application/json'
+            });
+            
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `maya-rayanha-local-${this.sessionId}-${new Date().toISOString().split('T')[0]}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            
+            this.showNotification('success', 'Export local réussi', 'Données locales exportées');
+        } catch (error) {
+            console.error('❌ Erreur export local:', error);
+            this.showNotification('error', 'Erreur', 'Impossible d\'exporter les données');
         }
     }
 
@@ -866,8 +1266,26 @@ class MobileTaskManager {
 
 // Initialisation de l'application quand le DOM est prêt
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('🚀 Initialisation Maya & Rayanha v2.1 - Edition Persistante');
+    console.log('🚀 Initialisation Maya & Rayanha v3.1 - Persistance Robuste avec IndexedDB');
     window.taskManager = new MobileTaskManager();
+    
+    // Détection des changements de connectivité
+    window.addEventListener('online', () => {
+        console.log('🔌 Connexion rétablie');
+        if (window.taskManager) {
+            window.taskManager.showNotification('success', 'Connexion', 'Connexion rétablie');
+            window.taskManager.updateConnectionStatus(true);
+            window.taskManager.syncWithServer();
+        }
+    });
+    
+    window.addEventListener('offline', () => {
+        console.log('🔌 Connexion perdue');
+        if (window.taskManager) {
+            window.taskManager.showNotification('warning', 'Hors ligne', 'Mode hors ligne activé');
+            window.taskManager.updateConnectionStatus(false);
+        }
+    });
 });
 
 // Gestion des erreurs globales

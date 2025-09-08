@@ -13,218 +13,49 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Stockage temporaire en mémoire (sera remplacé par le stockage client)
-let memoryData = {
-  users: ['Maya l\'abeille', 'Rayanha'],
-  tasks: [],
-  pendingTasks: [],
-  lastUpdate: Date.now(),
-  sessions: new Map() // Pour suivre les sessions actives
+// Stockage persistant temporaire pour synchronisation
+// Chaque session a son propre state temporaire
+let globalState = {
+  sessions: new Map(), // sessionId -> { data, lastUpdate, participants }
+  messages: [], // Messages de synchronisation entre sessions
+  lastCleanup: Date.now()
 };
 
-// Fonction pour nettoyer les sessions inactives (> 30 min)
-function cleanupSessions() {
+// Nettoyer les anciennes sessions (> 2 heures) et messages (> 10 minutes)
+function cleanupGlobalState() {
   const now = Date.now();
-  const thirtyMinutes = 30 * 60 * 1000;
+  const twoHours = 2 * 60 * 60 * 1000;
+  const tenMinutes = 10 * 60 * 1000;
   
-  for (const [sessionId, session] of memoryData.sessions.entries()) {
-    if (now - session.lastActivity > thirtyMinutes) {
-      memoryData.sessions.delete(sessionId);
+  if (now - globalState.lastCleanup > 60000) { // Nettoyer toutes les minutes
+    // Nettoyer les sessions inactives
+    for (const [sessionId, session] of globalState.sessions) {
+      if (now - session.lastUpdate > twoHours) {
+        globalState.sessions.delete(sessionId);
+      }
     }
+    
+    // Nettoyer les anciens messages
+    globalState.messages = globalState.messages.filter(msg => 
+      now - msg.timestamp < tenMinutes
+    );
+    
+    globalState.lastCleanup = now;
   }
 }
 
-// Fonction pour notifier un changement
-function updateData() {
-  memoryData.lastUpdate = Date.now();
-  cleanupSessions();
-}
-
-// Routes API
-
-// Obtenir les données avec merge intelligent des sessions actives
-app.get('/api/data', (req, res) => {
-  try {
-    // Nettoyer les sessions expirées
-    cleanupSessions();
-    
-    // Merger les données de toutes les sessions actives
-    let mergedTasks = [...memoryData.tasks];
-    let mergedPendingTasks = [...memoryData.pendingTasks];
-    
-    // Ajouter les données des sessions actives
-    for (const session of memoryData.sessions.values()) {
-      if (session.data) {
-        // Merger sans doublons basés sur l'ID
-        session.data.tasks?.forEach(task => {
-          if (!mergedTasks.find(t => t.id === task.id)) {
-            mergedTasks.push(task);
-          }
-        });
-        
-        session.data.pendingTasks?.forEach(task => {
-          if (!mergedPendingTasks.find(t => t.id === task.id)) {
-            mergedPendingTasks.push(task);
-          }
-        });
-      }
-    }
-    
-    const responseData = {
-      users: memoryData.users,
-      tasks: mergedTasks,
-      pendingTasks: mergedPendingTasks,
-      timestamp: memoryData.lastUpdate,
-      activeSessions: memoryData.sessions.size
-    };
-    
-    res.json(responseData);
-  } catch (error) {
-    console.error('Erreur lecture données:', error);
-    res.status(500).json({ error: 'Erreur lors de la récupération des données' });
-  }
+// Route de santé simple
+app.get('/api/health', (req, res) => {
+  cleanupGlobalState();
+  res.json({ 
+    status: 'ok',
+    timestamp: Date.now(),
+    sessions: globalState.sessions.size,
+    messages: globalState.messages.length
+  });
 });
 
-// Synchronisation des données client (nouveau endpoint)
-app.post('/api/sync', (req, res) => {
-  try {
-    const { sessionId, clientData } = req.body;
-    
-    if (!sessionId) {
-      return res.status(400).json({ error: 'Session ID requis' });
-    }
-    
-    // Créer ou mettre à jour la session
-    memoryData.sessions.set(sessionId, {
-      id: sessionId,
-      lastActivity: Date.now(),
-      data: clientData
-    });
-    
-    // Nettoyer les sessions expirées
-    cleanupSessions();
-    
-    // Merger toutes les données actives
-    let allTasks = [...memoryData.tasks];
-    let allPendingTasks = [...memoryData.pendingTasks];
-    
-    for (const session of memoryData.sessions.values()) {
-      if (session.data && session.id !== sessionId) {
-        session.data.tasks?.forEach(task => {
-          if (!allTasks.find(t => t.id === task.id)) {
-            allTasks.push(task);
-          }
-        });
-        
-        session.data.pendingTasks?.forEach(task => {
-          if (!allPendingTasks.find(t => t.id === task.id)) {
-            allPendingTasks.push(task);
-          }
-        });
-      }
-    }
-    
-    // Ajouter les nouvelles données du client
-    clientData.tasks?.forEach(task => {
-      if (!allTasks.find(t => t.id === task.id)) {
-        allTasks.push(task);
-      }
-    });
-    
-    clientData.pendingTasks?.forEach(task => {
-      if (!allPendingTasks.find(t => t.id === task.id)) {
-        allPendingTasks.push(task);
-      }
-    });
-    
-    updateData();
-    
-    res.json({
-      success: true,
-      mergedData: {
-        users: memoryData.users,
-        tasks: allTasks,
-        pendingTasks: allPendingTasks,
-        timestamp: memoryData.lastUpdate
-      },
-      activeSessions: memoryData.sessions.size
-    });
-  } catch (error) {
-    console.error('Erreur synchronisation:', error);
-    res.status(500).json({ error: 'Erreur lors de la synchronisation' });
-  }
-});
-
-// Polling avec données des sessions actives
-app.get('/api/poll/:sessionId/:lastUpdate', (req, res) => {
-  try {
-    const { sessionId, lastUpdate } = req.params;
-    const clientLastUpdate = parseInt(lastUpdate);
-    
-    // Mettre à jour l'activité de la session
-    const session = memoryData.sessions.get(sessionId);
-    if (session) {
-      session.lastActivity = Date.now();
-    }
-    
-    cleanupSessions();
-    
-    // Vérifier s'il y a des mises à jour depuis d'autres sessions
-    let hasUpdates = memoryData.lastUpdate > clientLastUpdate;
-    
-    // Vérifier les mises à jour des autres sessions
-    for (const otherSession of memoryData.sessions.values()) {
-      if (otherSession.id !== sessionId && otherSession.lastActivity > clientLastUpdate) {
-        hasUpdates = true;
-        break;
-      }
-    }
-    
-    if (hasUpdates) {
-      // Merger les données de toutes les sessions
-      let mergedTasks = [];
-      let mergedPendingTasks = [];
-      
-      for (const sessionData of memoryData.sessions.values()) {
-        if (sessionData.data) {
-          sessionData.data.tasks?.forEach(task => {
-            if (!mergedTasks.find(t => t.id === task.id)) {
-              mergedTasks.push(task);
-            }
-          });
-          
-          sessionData.data.pendingTasks?.forEach(task => {
-            if (!mergedPendingTasks.find(t => t.id === task.id)) {
-              mergedPendingTasks.push(task);
-            }
-          });
-        }
-      }
-      
-      res.json({
-        updated: true,
-        data: {
-          users: memoryData.users,
-          tasks: mergedTasks,
-          pendingTasks: mergedPendingTasks
-        },
-        timestamp: memoryData.lastUpdate,
-        activeSessions: memoryData.sessions.size
-      });
-    } else {
-      res.json({
-        updated: false,
-        timestamp: memoryData.lastUpdate,
-        activeSessions: memoryData.sessions.size
-      });
-    }
-  } catch (error) {
-    console.error('Erreur polling:', error);
-    res.status(500).json({ error: 'Erreur polling' });
-  }
-});
-
-// Les autres routes restent similaires mais utilisent maintenant les sessions
+// Endpoint pour proposer une nouvelle tâche
 app.post('/api/tasks/propose', (req, res) => {
   try {
     const { title, description, proposedBy, sessionId } = req.body;
@@ -233,368 +64,437 @@ app.post('/api/tasks/propose', (req, res) => {
       return res.status(400).json({ error: 'Titre, utilisateur et session requis' });
     }
 
-    const newTask = {
+    const task = {
       id: uuidv4(),
       title: title.trim(),
-      description: description?.trim() || '',
+      description: description ? description.trim() : '',
       proposedBy,
       proposedAt: new Date().toISOString(),
-      validations: [proposedBy],
-      status: 'pending',
-      sessionId // Tracer quelle session a créé la tâche
+      validations: [],
+      status: 'pending'
     };
 
-    // Ajouter à la session du client
-    let session = memoryData.sessions.get(sessionId);
-    if (!session) {
-      session = {
-        id: sessionId,
-        lastActivity: Date.now(),
-        data: { tasks: [], pendingTasks: [] }
-      };
-      memoryData.sessions.set(sessionId, session);
+    // Créer un message de notification
+    const notification = {
+      id: uuidv4(),
+      type: 'taskProposed',
+      task,
+      fromUser: proposedBy,
+      sessionId,
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(notification);
+    
+    // Garder seulement les 100 derniers messages
+    if (globalState.messages.length > 100) {
+      globalState.messages = globalState.messages.slice(-100);
     }
-    
-    if (!session.data.pendingTasks) {
-      session.data.pendingTasks = [];
-    }
-    
-    session.data.pendingTasks.push(newTask);
-    session.lastActivity = Date.now();
-    
-    updateData();
-    
-    res.json({
-      success: true,
-      task: newTask,
-      message: 'Tâche proposée avec succès'
+
+    res.json({ 
+      success: true, 
+      message: 'Tâche proposée avec succès',
+      task,
+      messageId: notification.id
     });
   } catch (error) {
     console.error('Erreur proposition tâche:', error);
-    res.status(500).json({ error: 'Erreur lors de la proposition de la tâche' });
+    res.status(500).json({ error: 'Erreur lors de la proposition' });
   }
 });
 
-// Valider une tâche
+// Endpoint pour valider une tâche
 app.post('/api/tasks/:taskId/validate', (req, res) => {
   try {
     const { taskId } = req.params;
     const { userId, sessionId } = req.body;
     
-    if (!userId || !sessionId) {
-      return res.status(400).json({ error: 'Utilisateur et session requis' });
+    if (!userId || !sessionId || !taskId) {
+      return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
-    // Chercher la tâche dans toutes les sessions
-    let foundTask = null;
-    let foundSession = null;
-    
-    for (const session of memoryData.sessions.values()) {
-      if (session.data?.pendingTasks) {
-        const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
-        if (taskIndex !== -1) {
-          foundTask = session.data.pendingTasks[taskIndex];
-          foundSession = session;
-          break;
-        }
-      }
-    }
-    
-    if (!foundTask) {
-      return res.status(404).json({ error: 'Tâche non trouvée' });
-    }
-    
-    // Ajouter la validation si pas déjà validée par cet utilisateur
-    if (!foundTask.validations.includes(userId)) {
-      foundTask.validations.push(userId);
-    }
-    
-    // Si les deux utilisateurs ont validé, déplacer vers les tâches actives
-    if (foundTask.validations.length >= 2) {
-      const approvedTask = {
-        ...foundTask,
-        status: 'active',
-        approvedAt: new Date().toISOString()
-      };
-      delete approvedTask.validations;
-      
-      // Supprimer de pendingTasks et ajouter à tasks
-      foundSession.data.pendingTasks = foundSession.data.pendingTasks.filter(t => t.id !== taskId);
-      if (!foundSession.data.tasks) {
-        foundSession.data.tasks = [];
-      }
-      foundSession.data.tasks.push(approvedTask);
-      
-      updateData();
-      
-      res.json({ 
-        success: true,
-        message: 'Tâche approuvée et ajoutée', 
-        task: approvedTask,
-        action: 'approved'
-      });
-    } else {
-      updateData();
-      
-      res.json({ 
-        success: true,
-        message: 'Validation ajoutée', 
-        task: foundTask,
-        action: 'validated'
-      });
-    }
+    // Créer un message de validation
+    const validation = {
+      id: uuidv4(),
+      type: 'taskValidated',
+      taskId,
+      validatedBy: userId,
+      sessionId,
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(validation);
+
+    res.json({ 
+      success: true, 
+      message: 'Validation enregistrée',
+      validation
+    });
   } catch (error) {
     console.error('Erreur validation:', error);
-    res.status(500).json({ error: 'Erreur lors de la validation de la tâche' });
+    res.status(500).json({ error: 'Erreur lors de la validation' });
   }
 });
 
-// Rejeter une tâche
+// Endpoint pour rejeter une tâche
 app.post('/api/tasks/:taskId/reject', (req, res) => {
   try {
     const { taskId } = req.params;
-    const { userId } = req.body;
+    const { userId, sessionId } = req.body;
     
-    // Chercher et supprimer la tâche de toutes les sessions
-    let rejectedTask = null;
-    
-    for (const session of memoryData.sessions.values()) {
-      if (session.data?.pendingTasks) {
-        const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
-        if (taskIndex !== -1) {
-          rejectedTask = session.data.pendingTasks.splice(taskIndex, 1)[0];
-          break;
-        }
-      }
+    if (!userId || !sessionId || !taskId) {
+      return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
-    
-    if (!rejectedTask) {
-      return res.status(404).json({ error: 'Tâche non trouvée' });
-    }
-    
-    updateData();
-    
+
+    const rejection = {
+      id: uuidv4(),
+      type: 'taskRejected',
+      taskId,
+      rejectedBy: userId,
+      sessionId,
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(rejection);
+
     res.json({ 
-      success: true,
-      message: 'Tâche rejetée', 
-      task: rejectedTask,
-      action: 'rejected'
+      success: true, 
+      message: 'Tâche rejetée',
+      rejection
     });
   } catch (error) {
     console.error('Erreur rejet:', error);
-    res.status(500).json({ error: 'Erreur lors du rejet de la tâche' });
+    res.status(500).json({ error: 'Erreur lors du rejet' });
   }
 });
 
-// Marquer une tâche comme terminée
+// Endpoint pour terminer une tâche
 app.post('/api/tasks/:taskId/complete', (req, res) => {
   try {
     const { taskId } = req.params;
-    const { userId } = req.body;
+    const { userId, sessionId } = req.body;
     
-    // Chercher la tâche dans toutes les sessions
-    let foundTask = null;
-    
-    for (const session of memoryData.sessions.values()) {
-      if (session.data?.tasks) {
-        const task = session.data.tasks.find(task => task.id === taskId);
-        if (task) {
-          foundTask = task;
-          break;
-        }
-      }
-    }
-    
-    if (!foundTask) {
-      return res.status(404).json({ error: 'Tâche non trouvée' });
+    if (!userId || !sessionId || !taskId) {
+      return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
 
-    foundTask.status = 'completed';
-    foundTask.completedBy = userId;
-    foundTask.completedAt = new Date().toISOString();
-    
-    updateData();
-    
-    res.json({
-      success: true,
+    const completion = {
+      id: uuidv4(),
+      type: 'taskCompleted',
+      taskId,
+      completedBy: userId,
+      completedAt: new Date().toISOString(),
+      sessionId,
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(completion);
+
+    res.json({ 
+      success: true, 
       message: 'Tâche terminée',
-      task: foundTask,
-      action: 'completed'
+      completion
     });
   } catch (error) {
-    console.error('Erreur complétion:', error);
-    res.status(500).json({ error: 'Erreur lors de la complétion de la tâche' });
+    console.error('Erreur completion:', error);
+    res.status(500).json({ error: 'Erreur lors de la completion' });
   }
 });
 
-// Supprimer une tâche
+// Endpoint pour supprimer une tâche
 app.delete('/api/tasks/:taskId', (req, res) => {
   try {
     const { taskId } = req.params;
-    const { userId } = req.body;
+    const { userId, sessionId } = req.body;
     
-    let deletedTask = null;
-    
-    // Chercher dans toutes les sessions
-    for (const session of memoryData.sessions.values()) {
-      if (session.data) {
-        // Chercher dans les tâches actives
-        if (session.data.tasks) {
-          const taskIndex = session.data.tasks.findIndex(task => task.id === taskId);
-          if (taskIndex !== -1) {
-            deletedTask = session.data.tasks.splice(taskIndex, 1)[0];
-            break;
-          }
-        }
-        
-        // Chercher dans les tâches en attente
-        if (!deletedTask && session.data.pendingTasks) {
-          const taskIndex = session.data.pendingTasks.findIndex(task => task.id === taskId);
-          if (taskIndex !== -1) {
-            deletedTask = session.data.pendingTasks.splice(taskIndex, 1)[0];
-            break;
-          }
-        }
-      }
+    if (!userId || !sessionId || !taskId) {
+      return res.status(400).json({ error: 'Utilisateur, session et tâche requis' });
     }
-    
-    if (!deletedTask) {
-      return res.status(404).json({ error: 'Tâche non trouvée' });
-    }
-    
-    updateData();
-    
+
+    const deletion = {
+      id: uuidv4(),
+      type: 'taskDeleted',
+      taskId,
+      deletedBy: userId,
+      sessionId,
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(deletion);
+
     res.json({ 
-      success: true,
-      message: 'Tâche supprimée', 
-      task: deletedTask,
-      action: 'deleted'
+      success: true, 
+      message: 'Tâche supprimée',
+      deletion
     });
   } catch (error) {
     console.error('Erreur suppression:', error);
-    res.status(500).json({ error: 'Erreur lors de la suppression de la tâche' });
+    res.status(500).json({ error: 'Erreur lors de la suppression' });
   }
 });
 
-// Exporter toutes les données mergées
-app.get('/api/export', (req, res) => {
-  try {
-    cleanupSessions();
-    
-    // Merger toutes les données
-    let allTasks = [];
-    let allPendingTasks = [];
-    
-    for (const session of memoryData.sessions.values()) {
-      if (session.data) {
-        session.data.tasks?.forEach(task => {
-          if (!allTasks.find(t => t.id === task.id)) {
-            allTasks.push(task);
-          }
-        });
-        
-        session.data.pendingTasks?.forEach(task => {
-          if (!allPendingTasks.find(t => t.id === task.id)) {
-            allPendingTasks.push(task);
-          }
-        });
-      }
-    }
-    
-    const exportData = {
-      users: memoryData.users,
-      tasks: allTasks,
-      pendingTasks: allPendingTasks,
-      exportedAt: new Date().toISOString(),
-      version: '2.1'
-    };
-    
-    res.setHeader('Content-Type', 'application/json');
-    res.setHeader('Content-Disposition', 'attachment; filename="maya-rayanha-tasks.json"');
-    res.json(exportData);
-  } catch (error) {
-    console.error('Erreur export:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'export des données' });
-  }
+// Endpoint pour générer un ID unique (utile pour les tâches)
+app.get('/api/uuid', (req, res) => {
+  res.json({ 
+    id: uuidv4(),
+    timestamp: Date.now()
+  });
 });
 
-// Importer des données
-app.post('/api/import', (req, res) => {
+// Endpoint pour synchroniser les données
+app.post('/api/sync', (req, res) => {
   try {
-    const { importedData, sessionId } = req.body;
+    const { sessionId, clientData } = req.body;
     
     if (!sessionId) {
       return res.status(400).json({ error: 'Session ID requis' });
     }
-    
-    // Validation basique des données importées
-    if (!importedData.tasks && !importedData.pendingTasks) {
-      return res.status(400).json({ error: 'Format de données invalide' });
-    }
 
-    // Créer ou récupérer la session
-    let session = memoryData.sessions.get(sessionId);
-    if (!session) {
-      session = {
-        id: sessionId,
-        lastActivity: Date.now(),
-        data: { tasks: [], pendingTasks: [] }
+    cleanupGlobalState();
+    
+    // Mettre à jour la session
+    const session = globalState.sessions.get(sessionId) || {
+      data: { users: ['Maya l\'abeille', 'Rayanha'], tasks: [], pendingTasks: [] },
+      lastUpdate: Date.now(),
+      participants: new Set()
+    };
+    
+    // Merge les données client avec les données de session
+    if (clientData) {
+      session.data = {
+        users: clientData.users || session.data.users,
+        tasks: clientData.tasks || session.data.tasks,
+        pendingTasks: clientData.pendingTasks || session.data.pendingTasks
       };
-      memoryData.sessions.set(sessionId, session);
     }
     
-    // Ajouter les données importées à la session
-    if (importedData.tasks) {
-      importedData.tasks.forEach(task => {
-        if (!session.data.tasks.find(t => t.id === task.id)) {
-          session.data.tasks.push(task);
-        }
-      });
-    }
+    session.lastUpdate = Date.now();
+    globalState.sessions.set(sessionId, session);
 
-    if (importedData.pendingTasks) {
-      importedData.pendingTasks.forEach(task => {
-        if (!session.data.pendingTasks.find(t => t.id === task.id)) {
-          session.data.pendingTasks.push(task);
-        }
-      });
-    }
-    
-    session.lastActivity = Date.now();
-    updateData();
-    
     res.json({ 
       success: true,
-      message: 'Import réussi',
-      action: 'imported'
+      mergedData: {
+        ...session.data,
+        timestamp: session.lastUpdate
+      }
     });
   } catch (error) {
-    console.error('Erreur import:', error);
-    res.status(500).json({ error: 'Erreur lors de l\'import des données' });
+    console.error('Erreur sync:', error);
+    res.status(500).json({ error: 'Erreur lors de la synchronisation' });
   }
 });
 
-// Route de santé
-app.get('/api/health', (req, res) => {
-  cleanupSessions();
-  
-  res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    users: memoryData.users,
-    activeSessions: memoryData.sessions.size,
-    lastUpdate: memoryData.lastUpdate,
-    serverTime: Date.now()
-  });
+// Endpoint pour le polling des mises à jour
+app.get('/api/poll/:sessionId/:since', (req, res) => {
+  try {
+    const { sessionId, since } = req.params;
+    const sinceTimestamp = parseInt(since) || 0;
+    
+    cleanupGlobalState();
+    
+    // Récupérer les messages pour cette session depuis 'since'
+    const relevantMessages = globalState.messages.filter(msg => 
+      msg.timestamp > sinceTimestamp && 
+      (msg.sessionId === sessionId || !msg.sessionId)
+    );
+    
+    if (relevantMessages.length > 0) {
+      res.json({
+        updated: true,
+        messages: relevantMessages,
+        timestamp: Date.now()
+      });
+    } else {
+      res.json({
+        updated: false,
+        timestamp: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error('Erreur polling:', error);
+    res.status(500).json({ error: 'Erreur lors du polling' });
+  }
 });
 
-// Route pour tester la connectivité
+// Endpoint pour récupérer les données actuelles
+app.get('/api/data', (req, res) => {
+  try {
+    const sessionId = req.query.sessionId;
+    
+    cleanupGlobalState();
+    
+    if (sessionId && globalState.sessions.has(sessionId)) {
+      const session = globalState.sessions.get(sessionId);
+      res.json({
+        ...session.data,
+        timestamp: session.lastUpdate
+      });
+    } else {
+      // Données par défaut
+      res.json({
+        users: ['Maya l\'abeille', 'Rayanha'],
+        tasks: [],
+        pendingTasks: [],
+        timestamp: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error('Erreur récupération données:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération' });
+  }
+});
+
+// Endpoint pour envoyer des notifications personnalisées
+app.post('/api/notify', (req, res) => {
+  try {
+    const { type, data, fromUser, toUser, sessionId } = req.body;
+    
+    if (!type || !fromUser) {
+      return res.status(400).json({ error: 'Type et utilisateur requis' });
+    }
+
+    const notification = {
+      id: uuidv4(),
+      type, // 'taskProposed', 'taskValidated', 'taskApproved', etc.
+      data,
+      fromUser,
+      toUser: toUser || 'all',
+      sessionId: sessionId || 'global',
+      timestamp: Date.now()
+    };
+
+    cleanupGlobalState();
+    globalState.messages.push(notification);
+    
+    // Garder seulement les 100 derniers messages pour éviter l'engorgement
+    if (globalState.messages.length > 100) {
+      globalState.messages = globalState.messages.slice(-100);
+    }
+
+    res.json({ 
+      success: true, 
+      messageId: notification.id,
+      totalMessages: globalState.messages.length
+    });
+  } catch (error) {
+    console.error('Erreur notification:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'envoi de notification' });
+  }
+});
+
+// Endpoint pour récupérer les messages depuis un timestamp
+app.get('/api/messages/:since', (req, res) => {
+  try {
+    const since = parseInt(req.params.since) || 0;
+    const sessionId = req.query.sessionId;
+    
+    cleanupGlobalState();
+    
+    // Filtrer les messages plus récents que 'since' et pour la session appropriée
+    const relevantMessages = globalState.messages.filter(msg => 
+      msg.timestamp > since && 
+      (!sessionId || msg.sessionId === sessionId || msg.sessionId === 'global')
+    );
+
+    res.json({
+      messages: relevantMessages,
+      timestamp: Date.now(),
+      totalMessages: globalState.messages.length
+    });
+  } catch (error) {
+    console.error('Erreur récupération messages:', error);
+    res.status(500).json({ error: 'Erreur lors de la récupération' });
+  }
+});
+
+// Simple ping
 app.get('/api/ping', (req, res) => {
   res.json({ 
     pong: true, 
-    timestamp: Date.now(),
-    sessions: memoryData.sessions.size
+    timestamp: Date.now()
   });
+});
+
+// Endpoint pour l'import de données
+app.post('/api/import', (req, res) => {
+  try {
+    const { importedData, sessionId } = req.body;
+    
+    if (!importedData || !sessionId) {
+      return res.status(400).json({ error: 'Données et session requis' });
+    }
+
+    // Valider le format des données importées
+    if (!importedData.users || !Array.isArray(importedData.tasks)) {
+      return res.status(400).json({ error: 'Format de données invalide' });
+    }
+
+    cleanupGlobalState();
+    
+    // Mettre à jour la session avec les données importées
+    const session = globalState.sessions.get(sessionId) || {
+      data: { users: ['Maya l\'abeille', 'Rayanha'], tasks: [], pendingTasks: [] },
+      lastUpdate: Date.now(),
+      participants: new Set()
+    };
+    
+    // Merger les données importées
+    session.data = {
+      users: importedData.users || session.data.users,
+      tasks: [...(session.data.tasks || []), ...(importedData.tasks || [])],
+      pendingTasks: [...(session.data.pendingTasks || []), ...(importedData.pendingTasks || [])]
+    };
+    
+    session.lastUpdate = Date.now();
+    globalState.sessions.set(sessionId, session);
+
+    res.json({ 
+      success: true, 
+      message: `Import réussi: ${importedData.tasks?.length || 0} tâches importées`
+    });
+  } catch (error) {
+    console.error('Erreur import:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'import' });
+  }
+});
+
+// Endpoint pour l'export des données
+app.get('/api/export', (req, res) => {
+  try {
+    const sessionId = req.query.sessionId;
+    
+    cleanupGlobalState();
+    
+    let exportData = {
+      users: ['Maya l\'abeille', 'Rayanha'],
+      tasks: [],
+      pendingTasks: [],
+      exportedAt: new Date().toISOString(),
+      version: '3.1',
+      sessionId: sessionId || 'template'
+    };
+    
+    // Si on a une session, exporter ses données
+    if (sessionId && globalState.sessions.has(sessionId)) {
+      const session = globalState.sessions.get(sessionId);
+      exportData = {
+        ...exportData,
+        ...session.data
+      };
+    }
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="maya-rayanha-${sessionId || 'template'}-${new Date().toISOString().split('T')[0]}.json"`);
+    res.json(exportData);
+  } catch (error) {
+    console.error('Erreur export:', error);
+    res.status(500).json({ error: 'Erreur lors de l\'export' });
+  }
 });
 
 // Servir les fichiers statiques en local seulement
@@ -619,7 +519,7 @@ module.exports = app;
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 3000;
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 Serveur Maya & Rayanha v2.1 démarré sur le port ${PORT}`);
+    console.log(`🚀 Serveur Maya & Rayanha v3.0 démarré sur le port ${PORT}`);
     console.log(`📱 Interface mobile: http://localhost:${PORT}`);
   });
 }
