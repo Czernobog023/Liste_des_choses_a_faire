@@ -117,27 +117,35 @@ addTouchHandler(element, handler) {
         }
     }
 
-    async loadLocalData() {
-        try {
-            await this.initStorage();
-            let loadedData;
-            if (this.db) {
-                const dataObject = await this.db.get('appData', 'data');
-                loadedData = dataObject?.value;
-            } else {
-                const localData = localStorage.getItem('maya_rayanha_data');
-                loadedData = localData ? JSON.parse(localData) : null;
-            }
+async loadLocalData() {
+    try {
+        await this.initStorage();
+        let loadedData;
 
-            if (loadedData) {
-                this.data.tasks = loadedData.tasks || [];
-                this.data.pendingTasks = loadedData.pendingTasks || [];
-                console.log('✅ Données locales chargées.');
-            }
-        } catch (error) {
-            console.error('❌ Erreur de chargement local:', error);
+        if (this.db) {
+            // MODIFIÉ : Utilisation correcte de la transaction IndexedDB pour lire les données
+            loadedData = await new Promise((resolve, reject) => {
+                const transaction = this.db.transaction('appData', 'readonly');
+                const request = transaction.objectStore('appData').get('data');
+                transaction.oncomplete = () => resolve(request.result?.value);
+                transaction.onerror = (event) => reject(event.target.error);
+            });
+        } else {
+            // Le fallback localStorage reste inchangé
+            const localData = localStorage.getItem('maya_rayanha_data');
+            loadedData = localData ? JSON.parse(localData) : null;
         }
+
+        if (loadedData) {
+            this.data.tasks = loadedData.tasks || [];
+            this.data.pendingTasks = loadedData.pendingTasks || [];
+            console.log('✅ Données locales chargées avec succès.');
+        }
+    } catch (error) {
+        console.error('❌ Erreur de chargement local:', error);
     }
+}
+    
     
     // --- Fonctions de synchronisation et de rendu ---
     startPolling() { if (!this.pollingInterval) { this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); console.log('🔄 Polling démarré (toutes les 10s)'); } }
