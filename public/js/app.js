@@ -69,18 +69,17 @@ class MobileTaskManager {
         if (cancelTask) this.addTouchHandler(cancelTask, () => this.closeTaskModal());
     }
 
-    
+   // FONCTION addTouchHandler 
 addTouchHandler(element, handler) {
     if (!element) return;
 
-    // On utilise simplement l'événement 'click'. C'est le plus fiable.
     element.addEventListener('click', (e) => {
-        // On garde stopPropagation() pour éviter que le clic ne se propage
-        // à des éléments parents, ce qui est une bonne pratique.
+        console.log("-> Clic détecté par addTouchHandler sur l'élément:", element); // AJOUT DE CET ESPION
         e.stopPropagation(); 
         handler(e);
     });
 }
+
 
     // --- Fonctions de persistance des données ---
     async initStorage() {
