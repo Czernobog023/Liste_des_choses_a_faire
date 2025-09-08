@@ -75,10 +75,7 @@ class MobileTaskManager {
     async initStorage() {
         if (this.db) return;
         return new Promise((resolve) => {
-            if (!window.indexedDB) {
-                console.warn('IndexedDB non supporté, fallback sur localStorage.');
-                return resolve();
-            }
+            if (!window.indexedDB) return resolve();
             const request = indexedDB.open('MayaRayanhaDB', 3);
             request.onerror = () => resolve();
             request.onsuccess = (e) => { this.db = e.target.result; resolve(); };
@@ -100,7 +97,6 @@ class MobileTaskManager {
             } else {
                 localStorage.setItem('maya_rayanha_data', JSON.stringify(dataToSave));
             }
-            console.log('💾 Données sauvegardées localement.');
         } catch (error) {
             console.error('❌ Erreur de sauvegarde locale:', error);
         }
@@ -125,7 +121,6 @@ class MobileTaskManager {
             if (loadedData) {
                 this.data.tasks = loadedData.tasks || [];
                 this.data.pendingTasks = loadedData.pendingTasks || [];
-                console.log('✅ Données locales chargées.');
             }
         } catch (error) {
             console.error('❌ Erreur de chargement local:', error);
@@ -136,7 +131,6 @@ class MobileTaskManager {
     startPolling() { 
         if (!this.pollingInterval) { 
             this.pollingInterval = setInterval(() => this.syncWithServer(), 10000); 
-            console.log('🔄 Polling démarré (toutes les 10s)'); 
         } 
     }
 
@@ -147,10 +141,8 @@ class MobileTaskManager {
             
             const serverData = await response.json();
             
-            const localTempTasks = this.data.pendingTasks.filter(t => String(t.id).startsWith('temp_'));
-            
             this.data.tasks = serverData.tasks || [];
-            this.data.pendingTasks = [...(serverData.pendingTasks || []), ...localTempTasks];
+            this.data.pendingTasks = serverData.pendingTasks || [];
             
             await this.saveData();
             this.renderAllTasks();
@@ -226,12 +218,7 @@ class MobileTaskManager {
             this.addTouchHandler(button, () => {
                 const action = button.dataset.action;
                 const taskId = button.dataset.taskId;
-                switch (action) {
-                    case 'validate': this.validateTask(taskId); break;
-                    case 'reject': this.rejectTask(taskId); break;
-                    case 'complete': this.completeTask(taskId); break;
-                    case 'delete': this.deleteTask(taskId); break;
-                }
+                this.handleAction(action, taskId);
             });
         });
     }
@@ -240,116 +227,62 @@ class MobileTaskManager {
     // SECTION DES ACTIONS UTILISATEUR (LOGIQUE FINALE ET STABLE)
     // ========================================================================
     
+    async handleAction(action, taskId) {
+        const urlMap = {
+            propose: '/api/tasks/propose',
+            validate: `/api/tasks/${taskId}/validate`,
+            reject: `/api/tasks/${taskId}/reject`,
+            complete: `/api/tasks/${taskId}/complete`,
+            delete: `/api/tasks/${taskId}`
+        };
+        const methodMap = {
+            propose: 'POST', validate: 'POST', reject: 'POST', complete: 'POST', delete: 'DELETE'
+        };
+
+        let body = { userId: this.currentUser };
+        
+        if (action === 'delete' || action === 'reject') {
+            if (!confirm(`Êtes-vous sûr de vouloir ${action === 'delete' ? 'supprimer' : 'rejeter'} cette tâche ?`)) return;
+        }
+
+        this.showLoading(true);
+
+        try {
+            const response = await fetch(urlMap[action], {
+                method: methodMap[action],
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ...body, sessionId: this.sessionId })
+            });
+
+            const result = await response.json();
+            if (!result.success) throw new Error(result.error || 'Erreur du serveur');
+            
+            this.showNotification('success', 'Action réussie !', result.message);
+
+            // MODIFIÉ : On déclenche une synchronisation pour obtenir l'état le plus récent
+            await this.syncWithServer();
+
+        } catch (error) {
+            this.showNotification('error', 'Erreur', error.message);
+        } finally {
+            this.showLoading(false);
+        }
+    }
+
     submitNewTask() {
         const title = document.getElementById('taskTitle').value.trim();
         if (!title) return this.showNotification('warning', 'Erreur', 'Le titre est requis');
         const description = document.getElementById('taskDescription').value.trim();
         this.closeTaskModal();
-
-        const newTask = { 
-            id: `temp_${Date.now()}`, 
-            title, description, 
-            proposedBy: this.currentUser, 
-            proposedAt: new Date().toISOString(), 
-            validations: [],
-            status: 'pending'
-        };
-
-        this.data.pendingTasks.push(newTask);
-        this.renderAllTasks();
-        this.updateBadges();
-        this.saveData();
-
-        this.sendActionInBackground('/api/tasks/propose', 'POST', { tempId: newTask.id, title, description, proposedBy: this.currentUser });
-    }
-
-    validateTask(taskId) {
-        const taskIndex = this.data.pendingTasks.findIndex(t => t.id === taskId);
-        if (taskIndex === -1) return;
-
-        const task = this.data.pendingTasks[taskIndex];
-        if (task.proposedBy === this.currentUser) return this.showNotification('warning', 'Action impossible', 'Vous ne pouvez pas valider votre propre proposition.');
-
-        this.data.pendingTasks.splice(taskIndex, 1);
-        task.status = 'active';
-        task.approvedAt = new Date().toISOString();
-        task.validations.push(this.currentUser);
-        this.data.tasks.push(task);
-
-        this.renderAllTasks();
-        this.updateBadges();
-        this.saveData();
-        this.showNotification('success', 'Tâche Approuvée !', `${task.title} est maintenant active.`);
         
-        this.sendActionInBackground(`/api/tasks/${taskId}/validate`, 'POST', { userId: this.currentUser });
+        // La nouvelle logique passe par handleAction, on ne fait plus de mise à jour optimiste ici.
+        this.handleAction('propose', null, { title, description, proposedBy: this.currentUser });
     }
 
-    completeTask(taskId) {
-        const taskIndex = this.data.tasks.findIndex(t => t.id === taskId && t.status !== 'completed');
-        if (taskIndex === -1) return;
-
-        const task = this.data.tasks[taskIndex];
-        task.status = 'completed';
-        task.completedBy = this.currentUser;
-        task.completedAt = new Date().toISOString();
-        
-        this.renderAllTasks();
-        this.updateBadges();
-        this.saveData();
-        this.showNotification('success', 'Tâche Terminée !', `Vous avez terminé : ${task.title}`);
-        
-        this.sendActionInBackground(`/api/tasks/${taskId}/complete`, 'POST', { userId: this.currentUser });
-    }
-
-    rejectTask(taskId) {
-        if (!confirm('Rejeter cette tâche ?')) return;
-        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-        this.renderAllTasks();
-        this.updateBadges();
-        this.saveData();
-        this.showNotification('info', 'Tâche rejetée');
-        this.sendActionInBackground(`/api/tasks/${taskId}/reject`, 'POST', { userId: this.currentUser });
-    }
-
-    deleteTask(taskId) {
-        if (!confirm('Supprimer cette tâche définitivement ?')) return;
-        this.data.tasks = this.data.tasks.filter(t => t.id !== taskId);
-        this.data.pendingTasks = this.data.pendingTasks.filter(t => t.id !== taskId);
-        this.renderAllTasks();
-        this.updateBadges();
-        this.saveData();
-        this.showNotification('info', 'Tâche supprimée');
-        this.sendActionInBackground(`/api/tasks/${taskId}`, 'DELETE', { userId: this.currentUser });
-    }
-    
-    sendActionInBackground(url, method, body) {
-        fetch(url, {
-            method,
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ ...body, sessionId: this.sessionId })
-        })
-        .then(response => response.json())
-        .then(result => {
-            if (result.success) {
-                console.log(`📡 Action [${method}] réussie.`);
-                if (method === 'POST' && url.includes('/propose') && result.task && body.tempId) {
-                    const tempTaskIndex = this.data.pendingTasks.findIndex(t => t.id === body.tempId);
-                    if (tempTaskIndex > -1) {
-                        this.data.pendingTasks[tempTaskIndex] = result.task;
-                        this.saveData();
-                        this.renderAllTasks();
-                        this.updateBadges();
-                    }
-                }
-            } else {
-                console.error('Erreur serveur en arrière-plan:', result.error);
-                this.syncWithServer();
-            }
-        })
-        .catch(error => {
-            console.error('❌ Erreur réseau en arrière-plan:', error);
-        });
-    }
+    validateTask(taskId) { this.handleAction('validate', taskId); }
+    completeTask(taskId) { this.handleAction('complete', taskId); }
+    rejectTask(taskId) { this.handleAction('reject', taskId); }
+    deleteTask(taskId) { this.handleAction('delete', taskId); }
 
     // --- Fonctions utilitaires ---
     openTaskModal() { const modal = document.getElementById('taskModal'); if (modal) { modal.classList.add('show'); document.getElementById('taskTitle')?.focus(); } }
@@ -364,9 +297,9 @@ class MobileTaskManager {
     }
     formatDate(dateString) { if (!dateString) return ''; const d = new Date(dateString); return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }); }
     escapeHtml(text) { const map = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }; return String(text).replace(/[&<>"']/g, m => map[m]); }
-    showLoading(show) { /* ... (implémentez si besoin) ... */ }
-    updateConnectionStatus(connected) { /* ... (implémentez si besoin) ... */ }
-    showNotification(type, title, message) { /* ... (implémentez si besoin) ... */ }
+    showLoading(show) { document.getElementById('loadingOverlay').style.display = show ? 'flex' : 'none'; }
+    updateConnectionStatus(connected) { /* ... */ }
+    showNotification(type, title, message) { /* ... */ }
 }
 
 // Initialisation
