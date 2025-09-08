@@ -69,14 +69,18 @@ class MobileTaskManager {
         if (cancelTask) this.addTouchHandler(cancelTask, () => this.closeTaskModal());
     }
 
-    addTouchHandler(element, handler) {
-        if (!element) return;
-        let touchStarted = false;
-        element.addEventListener('touchstart', (e) => { e.stopPropagation(); touchStarted = true; element.style.transform = 'scale(0.95)'; }, { passive: true });
-        element.addEventListener('touchend', (e) => { if (touchStarted) { e.preventDefault(); e.stopPropagation(); element.style.transform = ''; handler(e); touchStarted = false; } }, { passive: false });
-        element.addEventListener('touchcancel', () => { element.style.transform = ''; touchStarted = false; }, { passive: true });
-        element.addEventListener('click', (e) => { if (!touchStarted) { e.stopPropagation(); handler(e); }});
-    }
+    
+addTouchHandler(element, handler) {
+    if (!element) return;
+
+    // On utilise simplement l'événement 'click'. C'est le plus fiable.
+    element.addEventListener('click', (e) => {
+        // On garde stopPropagation() pour éviter que le clic ne se propage
+        // à des éléments parents, ce qui est une bonne pratique.
+        e.stopPropagation(); 
+        handler(e);
+    });
+}
 
     // --- Fonctions de persistance des données ---
     async initStorage() {
