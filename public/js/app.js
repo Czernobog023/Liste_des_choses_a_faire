@@ -250,29 +250,64 @@ class TaskManager {
     }
 
     // --- ACTIONS UTILISATEUR PUBLIQUES ---
+    // ========================================================================
+    // SECTION DES ACTIONS UTILISATEUR (CONNECTÉE AU SERVEUR)
+    // ========================================================================
 
     /**
-     * Propose une nouvelle tâche
-     * @param {string} title - Le titre de la tâche
-     * @param {string} description - La description de la tâche
+     * Gère toutes les actions en communiquant avec le serveur.
+     * C'est la fonction centrale qui remplace toutes les anciennes.
+     * @param {string} action - L'action à effectuer (propose, validate, complete, delete)
+     * @param {object} payload - Les données à envoyer au serveur
      */
-    proposeTask(title, description) {
-        const newTask = {
-            id: `task_${Date.now()}`, // ID unique
-            title: title,
-            description: description,
-            proposer: this.currentUser,
-            validator: null,
-            status: 'pending' // 'pending', 'active', 'completed'
+    async _performServerAction(action, payload = {}) {
+        // On arrête le rafraîchissement automatique pour éviter les conflits
+        this.stopPolling(); 
+
+        const endpoint = '/api/tasks'; // L'URL de base de votre API sur Vercel
+        const body = {
+            action: action,
+            user: this.currentUser,
+            ...payload
         };
 
-        this.data.tasks.push(newTask);
-        this._saveState();
-        this._render();
+        try {
+            const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
 
-        // ÉTAPE 2 : ICI, ON AJOUTERA L'APPEL AU SERVEUR (fetch)
-        console.log("Nouvelle tâche proposée :", newTask);
+            if (!response.ok) {
+                throw new Error("Le serveur a retourné une erreur.");
+            }
+
+            // Le serveur répond avec la nouvelle liste de tâches à jour
+            const updatedTasks = await response.json();
+            this.data.tasks = updatedTasks; // On met à jour nos données locales
+
+            this._saveState(); // On sauvegarde ce nouvel état
+            this._render();   // On rafraîchit l'affichage
+
+        } catch (error) {
+            console.error("Erreur lors de l'action serveur :", error);
+            // En cas d'erreur, on affiche un message à l'utilisateur
+        } finally {
+            // Quoi qu'il arrive, on relance le rafraîchissement automatique
+            this.startPolling(); 
+        }
     }
+
+    // Les fonctions ci-dessous deviennent de simples raccourcis vers la fonction centrale
+    proposeTask(title, description) {
+        this._performServerAction('propose', { title, description });
+    }
+
+    _handleTaskAction(action, id) {
+        this._performServerAction(action, { taskId: id });
+    }
+
+   
 }
 
 // Démarrage de l'application
